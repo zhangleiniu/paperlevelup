@@ -152,14 +152,34 @@ def run_remote(body: str, payload=None, config: dict | None = None, timeout: int
 
 
 def scp_from_remote(remote_path: str, local_path: Path, config: dict | None = None):
-    """Copy one file down. The remote path goes through the remote shell, so it
-    must be quoted for it."""
+    """Copy one file down.
+
+    Quoting depends on which protocol scp speaks, and library filenames contain
+    spaces, so this matters:
+
+    - OpenSSH >= 9 defaults to SFTP, which never invokes a remote shell. The
+      path must be passed *raw*; shell-quoting it makes the quote characters
+      part of the filename and the copy fails with "No such file or directory".
+    - Older scp (and `-O`) does go through the remote shell, so the path must
+      be quoted for it.
+
+    Try the modern form first, fall back to the legacy one.
+    """
     config = config or load_config()
-    src = "%s:%s" % (config["host"], shlex.quote(remote_path))
-    cmd = ["scp", *config.get("ssh_opts", DEFAULT_SSH_OPTS), "-q", src, str(local_path)]
-    proc = subprocess.run(cmd, capture_output=True, timeout=300)
-    if proc.returncode != 0:
-        raise RuntimeError("scp failed: %s" % proc.stderr.decode("utf-8", "replace").strip())
+    ssh_opts = config.get("ssh_opts", DEFAULT_SSH_OPTS)
+    attempts = (
+        (["scp", *ssh_opts, "-q",
+          "%s:%s" % (config["host"], remote_path), str(local_path)], "sftp"),
+        (["scp", *ssh_opts, "-O", "-q",
+          "%s:%s" % (config["host"], shlex.quote(remote_path)), str(local_path)], "legacy"),
+    )
+    errors = []
+    for cmd, mode in attempts:
+        proc = subprocess.run(cmd, capture_output=True, timeout=300)
+        if proc.returncode == 0:
+            return
+        errors.append("[%s] %s" % (mode, proc.stderr.decode("utf-8", "replace").strip()))
+    raise RuntimeError("scp failed:\n%s" % "\n".join(errors))
 
 
 # --------------------------------------------------------------------------
@@ -190,9 +210,20 @@ def parse_filename(name: str) -> dict:
     return {"year": None, "venue": head or None, "title": title}
 
 
+# The library stores venues lowercase. Upper-casing them blindly yields
+# `NEURIPS`/`ARXIV`, which clashes with how these venues are written
+# everywhere else in a topic folder, so map the ones with a house style.
+VENUE_CASE = {
+    "NEURIPS": "NeurIPS", "ARXIV": "arXiv", "AISTATS": "AISTATS",
+    "JMLR": "JMLR", "COLT": "COLT", "UAI": "UAI", "ICLR": "ICLR",
+    "ICML": "ICML", "CVPR": "CVPR", "ICCV": "ICCV", "ECCV": "ECCV",
+}
+
+
 def build_filename(title: str, venue: str | None, year: int | None) -> str:
     """Render the naming convention: `[year VENUE]title.pdf`."""
-    head = " ".join(str(p) for p in (year, (venue or "").upper() or None) if p)
+    venue_up = (venue or "").upper()
+    head = " ".join(str(p) for p in (year, VENUE_CASE.get(venue_up, venue_up) or None) if p)
     safe = UNSAFE_RE.sub("-", (title or "untitled").strip()).strip(". ")
     safe = re.sub(r"\s+", " ", safe)[:180].strip()
     return "[%s]%s.pdf" % (head, safe) if head else "%s.pdf" % safe
