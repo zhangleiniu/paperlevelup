@@ -199,7 +199,18 @@ def build_filename(title: str, venue: str | None, year: int | None) -> str:
 
 
 def sanitize_dirname(name: str) -> str:
-    return UNSAFE_RE.sub("-", (name or "Uncategorized").strip()).strip(". ") or "Uncategorized"
+    """Category name -> relative folder path.
+
+    A category may be a `/`-separated path (`"1 Retrieval/1.1 Local"`), which
+    becomes nested folders. Each segment is sanitized on its own so the
+    separator survives; empty segments are dropped.
+    """
+    segments = []
+    for raw in (name or "").split("/"):
+        seg = UNSAFE_RE.sub("-", raw.strip()).strip(". ")
+        if seg:
+            segments.append(seg)
+    return "/".join(segments) or "Uncategorized"
 
 
 def norm_title(text: str) -> str:
@@ -291,7 +302,7 @@ def scan_pdfs(topic_dir: Path) -> tuple[list[dict], list[str]]:
                 found[key]["path"], rel.as_posix()))
             continue
         found[key] = {"key": key, "path": rel.as_posix(),
-                      "category_dir": rel.parts[0] if len(rel.parts) > 1 else None}
+                      "category_dir": "/".join(rel.parts[:-1]) or None}
     return list(found.values()), problems
 
 

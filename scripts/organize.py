@@ -52,13 +52,16 @@ def apply_layout(sidecar: Sidecar, dry_run: bool) -> list[dict]:
         rec["path"] = target_rel
 
     if not dry_run:
-        for path in sorted(sidecar.topic.iterdir()):
-            if path.is_dir() and not path.name.startswith("."):
-                if not any(path.rglob("*.pdf")):
-                    try:
-                        path.rmdir()
-                    except OSError:
-                        pass
+        # Deepest first, so an emptied parent is reached after its children.
+        for path in sorted((p for p in sidecar.topic.rglob("*") if p.is_dir()),
+                           key=lambda p: len(p.parts), reverse=True):
+            if any(part.startswith(".") for part in path.relative_to(sidecar.topic).parts):
+                continue
+            if not any(path.rglob("*.pdf")):
+                try:
+                    path.rmdir()
+                except OSError:
+                    pass
     return moves
 
 
