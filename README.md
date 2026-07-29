@@ -10,16 +10,20 @@ proposes a taxonomy, sorts the PDFs into category subfolders, and writes a
 
 > **Status: personal setup, published as a working reference.**
 >
-> The scripts talk to *my* paper library — a private host (`archer`) running a
-> SQLite corpus of ~179k papers, a Meilisearch index over it, and a PDF store.
-> That library is not part of this repo and is not something you can stand up
-> from it. Without it `collect.py` fails at the SSH call rather than falling
-> back to local extraction, so **this will not run end-to-end on your machine.**
+> One of the two sources is *my* paper library — a private host (`archer`)
+> running a SQLite corpus of ~179k papers, a Meilisearch index over it, and a
+> PDF store. That library is not part of this repo and is not something you can
+> stand up from it.
 >
-> What is reusable is everything above the corpus: the agent workflow in
-> [`SKILL.md`](SKILL.md), the division of labour between agent and scripts, and
-> the two design decisions in [Design notes](#design-notes). Point the config at
-> your own index and the six scripts are maybe an afternoon of adaptation.
+> The other source is **OpenAlex**, which is public and needs no key. Setting
+> `"sources": ["openalex"]` in the config gives you identification, keyword
+> discovery and a citation graph without any private infrastructure — that path
+> does run end-to-end on your machine. You lose the curated PDF store and the
+> dense in-corpus edges.
+>
+> What is reusable regardless is everything above the corpus: the agent workflow
+> in [`SKILL.md`](SKILL.md), the division of labour between agent and scripts,
+> and the decisions in [Design notes](#design-notes).
 
 This project is installed as a Claude Code skill at
 `~/.claude/skills/paperlevelup/`, which is why Claude Code finds it from any
@@ -35,10 +39,10 @@ capabilities; `SKILL.md` tells the agent how to use them; every judgement — wh
 the categories should be, whether a discovered paper is relevant — happens in
 conversation, where you can redirect it. Nothing is hardcoded as a prompt.
 
-Retrieval and bookkeeping run in `scripts/`, which are thin SSH wrappers around
-the library host. Nothing is installed on the library host: each script ships a
-short program over SSH stdin. The Meilisearch key is read from the library
-host's own `.env` at run time and never leaves it.
+Retrieval and bookkeeping run in `scripts/` through a small source interface.
+The private archer adapter ships short programs over SSH stdin, while the
+OpenAlex adapter calls its public HTTP API directly. Nothing is installed on
+the library host, and its Meilisearch key never leaves that machine.
 
 ## Setup
 
@@ -46,9 +50,10 @@ host's own `.env` at run time and never leaves it.
 pip install pypdf
 ```
 
-You need SSH access to the library host with keys configured. The values tracked
-in `config/remote.json` are mine and will not resolve on your machine — they are
-there to document the shape, not as a default that works:
+You only need SSH access when using the private archer source. For an
+OpenAlex-only setup, set `"sources": ["openalex"]`. The archer values tracked in
+`config/remote.json` are mine and will not resolve on your machine — they
+document the shape rather than providing a working public default:
 
 | Key | Meaning |
 |---|---|
@@ -61,8 +66,8 @@ there to document the shape, not as a default that works:
 Put machine-specific overrides in `config/remote.local.json` (gitignored) rather
 than editing the tracked file.
 
-The scripts open one SSH connection and reuse it, so a run is one handshake, not
-one per paper.
+The archer adapter opens one SSH connection and reuses it, so an archer run is
+one handshake, not one per paper.
 
 ## Use it
 
@@ -105,8 +110,12 @@ python3 $PLU/organize.py --topic "$TOPIC" --sync            # re-apply the layou
 
 # discovery
 python3 $PLU/search.py --topic "$TOPIC" --keywords "term one,term two" --year-min 2022
+python3 $PLU/search.py --topic "$TOPIC" --keywords "..." --sources openalex
 python3 $PLU/graph.py  --topic "$TOPIC" --mode gaps
-python3 $PLU/fetch.py  --topic "$TOPIC" --ids "<id>,<id>" --category X
+python3 $PLU/fetch.py  --topic "$TOPIC" --ids "openalex:W123,archer:<uuid>" --category X
+
+# explicitly retry papers that no source identified
+python3 $PLU/collect.py --topic "$TOPIC" --retry-unresolved
 
 # readable output
 python3 $PLU/report.py --topic "$TOPIC"
@@ -121,27 +130,67 @@ MyTopic/
 │   └── [2025 EMNLP]Title.pdf
 └── .paperlevelup/
     ├── papers.jsonl            one record per paper
-    └── taxonomy.json           this topic's categories
+    ├── taxonomy.json           this topic's categories
+    └── cache/                  raw API responses, per source
 ```
 
 The folder is the source of truth. Drag a PDF into a different category folder
 and `organize.py --adopt-folders` picks the change up. Records are keyed by
-filename, which survives moves between categories; when a paper resolves against
-the library it also carries that library's global id, so the same paper in three
-topic folders is three PDFs but one identity.
+filename, which survives moves between categories.
+
+Identity is a dict — `ids: {archer, openalex, doi}` — because no single id is
+*the* identity once there is more than one backend: archer knows where the PDF
+is, OpenAlex knows the DOI and the global citation count. DOI is the join key
+between them. Each record also carries `provenance`, mapping every field to the
+source it came from.
+
+## Two sources
+
+`config/remote.json` lists which sources to use and in what order; every script
+takes `--sources` to override it for one run.
+
+During collection, configured sources are queried independently so their fields
+can be merged. Later runs only trigger enrichment for newly configured or
+previously untried sources unless `--force` is passed.
+
+|  | **archer** (private) | **OpenAlex** (public) |
+|---|---|---|
+| Coverage | 179k papers, 15 AI/ML venues | ~250M works, every venue |
+| PDFs | all | open access only (~43% of matches) |
+| Abstracts | ~96% | ~76% |
+| Citation edges | 3.8M, between corpus papers only | global, but present for ~48% of works |
+| DOI, global citation count | — | yes |
+
+The blind spots are different in kind, which is the whole reason for having
+both. archer misses whole **venues** — SIGIR, KDD, TKDE, ECIR, Scientometrics
+and most journals are absent, so searching it for "local citation
+recommendation" returns almost nothing. OpenAlex misses **reference lists**:
+coverage depends on publisher and Crossref deposits, so a preprint-heavy folder
+can have a much thinner citation graph.
+
+On a real 49-paper folder, archer alone identified 24; adding OpenAlex took it
+to 49.
+
+Set `openalex.mailto` in `config/remote.local.json` to join OpenAlex's polite
+pool (10 req/s, 100k/day). Responses are cached under
+`<topic>/.paperlevelup/cache/`, so a re-run costs nothing.
 
 ## Two channels for discovery
 
-**Keyword** (`search.py`) searches title, abstract, authors and venue across the
-whole library. It works for every paper in your folder, because the keywords
-come from reading the papers, not from the papers being indexed.
+**Keyword** (`search.py`) searches every configured source. It works for every
+paper in your folder, because the keywords come from reading the papers, not
+from the papers being indexed.
 
-**Citation** (`graph.py`) uses the library's resolved citation graph, so it only
-sees papers that are in the library — typically around 40% of a topic folder.
-Its `gaps` mode ranks by lift rather than raw citation count: raw count just
-returns the field's famous papers, while lift finds papers that are heavily
-cited inside your topic and obscure outside it. Those are the ones you're
-actually likely to have missed.
+**Citation** (`graph.py`) walks the citation graph. Its `gaps` mode ranks by
+lift rather than raw citation count: raw count just returns the field's famous
+papers, while lift finds papers heavily cited inside your topic and obscure
+outside it.
+
+Results are reported **one block per source, never merged into a single
+ranking**. Lift needs a popularity denominator and the two do not share one:
+archer can only count citations inside its own corpus, OpenAlex knows the global
+count — which is what lift was always reaching for. Merging them would produce
+numbers that look comparable and are not.
 
 Both channels over-recall on purpose and return abstracts. Nothing scores
 relevance for you — the agent reads them and you correct it.
@@ -162,3 +211,22 @@ Two earlier ideas were tried and dropped:
   score just freezes one person's judgement into a constant. The scripts recall
   widely and the judgement stays in the conversation, where it can be argued
   with.
+
+A third decision came with the second source:
+
+- **Field-level merge, not a source hierarchy.** The obvious design is "archer
+  wins, OpenAlex fills gaps", but that is wrong: they are authoritative about
+  different things, not the same things with different reliability. So metadata
+  merges field by field against a fixed precedence table and each record records
+  where every field came from. The same reasoning is why `graph.py` reports one
+  block per source instead of one merged ranking — deduplicating by DOI is
+  bookkeeping, but deciding whose rank-3 beats whose rank-1 is judgement, and
+  judgement does not go in the scripts.
+
+### Choosing a source, if you are adapting this
+
+Semantic Scholar was the obvious third candidate — it parses references out of
+PDFs, so it has the arXiv reference lists OpenAlex lacks, plus TLDRs and
+citation intents. It was dropped for now: the unauthenticated pool returns HTTP
+429 on essentially every request (five calls at 3.5s spacing, all rejected), so
+it is not usable without an API key. Worth adding behind a key if you have one.

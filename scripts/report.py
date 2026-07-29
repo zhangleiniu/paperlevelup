@@ -27,14 +27,19 @@ def render(sidecar: Sidecar) -> str:
     if "Uncategorized" in by_category:
         ordered.append("Uncategorized")
 
-    in_library = sum(1 for r in records if r.get("archer_id"))
+    identified = sum(1 for r in records if r.get("ids"))
+    in_archer = sum(1 for r in records
+                    if (r.get("ids") or {}).get("archer"))
+    in_openalex = sum(1 for r in records
+                      if (r.get("ids") or {}).get("openalex"))
     lines = [
         "# %s" % sidecar.topic.name,
         "",
-        "%d papers in %d categories · %d resolved against the library, "
-        "%d local only · updated %s" % (
+        "%d papers in %d categories · %d identified "
+        "(%d archer, %d OpenAlex), %d local only · updated %s" % (
             len(records), len([c for c in ordered if c != "Uncategorized"]),
-            in_library, len(records) - in_library, now_iso()),
+            identified, in_archer, in_openalex, len(records) - identified,
+            now_iso()),
         "",
     ]
 

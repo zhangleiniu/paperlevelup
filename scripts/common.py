@@ -258,14 +258,24 @@ class Sidecar:
     """`<topic>/.paperlevelup/` -- papers.jsonl plus the topic's own taxonomy.
 
     Records are keyed by PDF basename, which survives moves between category
-    subfolders. `archer_id` is the global identity when the paper resolves.
+    subfolders.
+
+    Identity is a dict, `ids: {archer, openalex, doi, arxiv}`, because with more
+    than one backend no single id is "the" identity: archer knows where the PDF
+    is, OpenAlex knows the DOI and the global citation count. `archer_id` is
+    still written and read as a mirror of `ids["archer"]` so older sidecars and
+    any code that predates sources keep working.
     """
+
+    #: cache lives beside the sidecar; sources namespace themselves inside it
+    CACHE_DIR = "cache"
 
     def __init__(self, topic_dir: Path):
         self.topic = Path(topic_dir).expanduser().resolve()
         self.dir = self.topic / SIDECAR_DIR
         self.papers_path = self.dir / PAPERS_FILE
         self.taxonomy_path = self.dir / TAXONOMY_FILE
+        self.cache_dir = self.dir / self.CACHE_DIR
         self.entries: dict[str, dict] = {}
         self.taxonomy: dict = {"categories": []}
         self.load()
@@ -276,7 +286,7 @@ class Sidecar:
                 line = line.strip()
                 if line:
                     rec = json.loads(line)
-                    self.entries[rec["key"]] = rec
+                    self.entries[rec["key"]] = _migrate_record(rec)
         if self.taxonomy_path.exists():
             self.taxonomy = json.loads(self.taxonomy_path.read_text(encoding="utf-8"))
 
@@ -294,6 +304,23 @@ class Sidecar:
     def upsert(self, key: str, **fields):
         rec = self.entries.setdefault(key, {"key": key, "added_at": now_iso()})
         rec.update(fields)
+        if "archer_id" in fields:
+            rec.setdefault("ids", {})["archer"] = fields["archer_id"]
+            if not fields["archer_id"]:
+                rec["ids"].pop("archer", None)
+        rec["updated_at"] = now_iso()
+        return rec
+
+    def set_id(self, key: str, source: str, ident: str | None):
+        """Record one source's identity without disturbing the others."""
+        rec = self.entries.setdefault(key, {"key": key, "added_at": now_iso()})
+        ids = rec.setdefault("ids", {})
+        if ident:
+            ids[source] = ident
+        else:
+            ids.pop(source, None)
+        if source == "archer":
+            rec["archer_id"] = ident
         rec["updated_at"] = now_iso()
         return rec
 
@@ -301,7 +328,30 @@ class Sidecar:
         return [c["name"] for c in self.taxonomy.get("categories", [])]
 
     def known_archer_ids(self) -> list[str]:
-        return [r["archer_id"] for r in self.entries.values() if r.get("archer_id")]
+        return [r["ids"]["archer"] for r in self.entries.values()
+                if (r.get("ids") or {}).get("archer")]
+
+    def known_uids(self, source: str | None = None) -> list[str]:
+        """Namespaced ids across every source, or just one of them."""
+        out = []
+        for rec in self.entries.values():
+            for name, ident in (rec.get("ids") or {}).items():
+                if ident and (source is None or name == source):
+                    out.append("%s:%s" % (name, ident))
+        return out
+
+    def uid_to_key(self) -> dict[str, str]:
+        out = {}
+        for key, rec in self.entries.items():
+            for name, ident in (rec.get("ids") or {}).items():
+                if ident:
+                    out["%s:%s" % (name, ident)] = key
+        return out
+
+    def known_dois(self) -> set[str]:
+        return {(r.get("ids") or {}).get("doi", "").lower()
+                for r in self.entries.values()
+                if (r.get("ids") or {}).get("doi")}
 
     def known_titles(self) -> set[str]:
         out = set()
@@ -310,6 +360,23 @@ class Sidecar:
                 if rec.get(field):
                     out.add(norm_title(rec[field]))
         return out
+
+
+def _migrate_record(rec: dict) -> dict:
+    """Bring a pre-sources record up to the `ids` schema, in memory.
+
+    Older sidecars carry a bare `archer_id`. Lifting it into `ids` on load
+    means nothing has to be rewritten on disk until the next save, and a
+    sidecar written by the newer code still reads on the older one because
+    `archer_id` stays populated.
+    """
+    ids = rec.get("ids")
+    if not isinstance(ids, dict):
+        ids = {}
+    if rec.get("archer_id") and not ids.get("archer"):
+        ids["archer"] = rec["archer_id"]
+    rec["ids"] = ids
+    return rec
 
 
 def scan_pdfs(topic_dir: Path) -> tuple[list[dict], list[str]]:

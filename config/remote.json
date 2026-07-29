@@ -5,5 +5,13 @@
   "pdf_root": "/Volumes/MyData/mustcite",
   "meili_url": "http://127.0.0.1:7700",
   "meili_index": "papers",
-  "match_threshold": 0.85
+  "match_threshold": 0.85,
+
+  "sources": ["archer", "openalex"],
+
+  "openalex": {
+    "mailto": "",
+    "timeout": 30,
+    "allow_pdf_download": true
+  }
 }
