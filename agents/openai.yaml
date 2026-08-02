@@ -1,0 +1,7 @@
+interface:
+  display_name: "Paper Level Up"
+  short_description: "Organize paper collections and discover missing research"
+  default_prompt: "Use $paperlevelup to organize this paper folder and propose a taxonomy before moving files."
+
+policy:
+  allow_implicit_invocation: true

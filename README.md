@@ -4,9 +4,10 @@ Organize a folder of papers with a coding agent (Claude Code / Codex), backed by
 your own paper library.
 
 You keep one folder per topic, full of PDFs named `[year VENUE]title.pdf`. Open
-it in VS Code, ask Claude Code to organize it, and it reads the whole collection,
-proposes a taxonomy, sorts the PDFs into category subfolders, and writes a
-`TOPIC.md`. It can then search your library for papers you're missing.
+it with Claude Code or Codex, ask the agent to organize it, and it reads the
+whole collection, proposes a taxonomy, sorts the PDFs into category subfolders,
+and writes a `TOPIC.md`. It can then search your library for papers you're
+missing.
 
 > **Status: personal setup, published as a working reference.**
 >
@@ -25,12 +26,13 @@ proposes a taxonomy, sorts the PDFs into category subfolders, and writes a
 > in [`SKILL.md`](SKILL.md), the division of labour between agent and scripts,
 > and the decisions in [Design notes](#design-notes).
 
-This project is installed as a Claude Code skill at
-`~/.claude/skills/paperlevelup/`, which is why Claude Code finds it from any
-directory. The `name`/`description` frontmatter at the top of `SKILL.md` is what
-makes that work — Claude Code reads every skill's frontmatter at startup and
-loads the body only when the description matches what you're asking for. Keep
-that block intact when editing.
+This checkout is the canonical copy at `~/.claude/skills/paperlevelup/`.
+Claude Code loads it there, while Codex loads the same directory through the
+symlink `~/.agents/skills/paperlevelup`. Keeping one real copy means edits to
+`SKILL.md`, scripts, tests, and config are immediately shared by both agents.
+
+The `name`/`description` frontmatter at the top of `SKILL.md` controls when the
+skill is considered and loaded. Keep that block intact when editing.
 
 ## How it's put together
 
@@ -49,6 +51,18 @@ the library host, and its Meilisearch key never leaves that machine.
 ```bash
 pip install pypdf
 ```
+
+For Codex, expose this same checkout through its user-level skills directory:
+
+```bash
+mkdir -p ~/.agents/skills
+ln -s ~/.claude/skills/paperlevelup ~/.agents/skills/paperlevelup
+```
+
+Verify the link with `ls -l ~/.agents/skills/paperlevelup`, then restart Codex
+if it was already running. Codex supports symlinked skill directories, so do
+not copy the project into both locations: keep editing the canonical checkout
+under `~/.claude/skills/paperlevelup/`.
 
 You only need SSH access when using the private archer source. For an
 OpenAlex-only setup, set `"sources": ["openalex"]`. The archer values tracked in
@@ -71,7 +85,7 @@ one handshake, not one per paper.
 
 ## Use it
 
-Open the topic folder in VS Code and say:
+Open the topic folder with Claude Code or Codex and say:
 
 > organize this folder
 
@@ -81,11 +95,16 @@ then sort the PDFs and write the report. Later:
 > what papers am I missing on this topic?
 
 Adding more PDFs and repeating the first instruction is safe — already-analysed
-papers are skipped. `/paperlevelup` invokes the skill explicitly if it doesn't
-trigger on its own.
+papers are skipped. In Claude Code, `/paperlevelup` invokes the skill explicitly.
+In Codex CLI or the IDE extension, use `/skills` to confirm discovery and invoke
+it with:
 
-Codex does not read Claude Code skills. To use it there, drop an `AGENTS.md` in
-the topic folder pointing at `~/.claude/skills/paperlevelup/SKILL.md`.
+```text
+$paperlevelup organize this folder
+```
+
+Natural-language requests can also trigger it implicitly when they match the
+description in `SKILL.md`.
 
 ## Running the scripts yourself
 

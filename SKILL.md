@@ -22,8 +22,13 @@ the scripts.
 
 ## Running the scripts
 
-They live in `~/.claude/skills/paperlevelup/scripts/`. Call them by absolute
-path from wherever you are — no `cd` needed, they find their own config:
+The canonical checkout normally lives at
+`~/.claude/skills/paperlevelup/`; Codex may discover the same directory through
+`~/.agents/skills/paperlevelup`. The latter should be a symlink, not a second
+copy, so both agents always run the same scripts.
+
+Call the scripts by absolute path from wherever you are — no `cd` needed, they
+find their own config:
 
 ```bash
 python3 ~/.claude/skills/paperlevelup/scripts/collect.py --topic "<topic folder>"
