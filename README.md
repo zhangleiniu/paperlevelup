@@ -1,4 +1,8 @@
-# Paper Level Up
+<div id="header" align="center">
+  <img src="paperlevelup.svg" alt="Paper Level Up logo" width="100">
+  <h1>Paper Level Up</h1>
+</div>
+
 
 Organize a folder of papers with a coding agent (Claude Code / Codex), backed by
 your own paper library.
