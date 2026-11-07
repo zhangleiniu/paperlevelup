@@ -249,7 +249,7 @@ class OpenAlexSource(Source):
         title and abstract the same query returns 319, and the head is on-topic.
         Pass fulltext=True only when the scoped query comes back too thin.
         """
-        base = ["type:article|preprint|book-chapter|proceedings-article"]
+        base = ["type:article|preprint|book-chapter|conference-paper"]
         if year_min and year_max:
             base.append("publication_year:%d-%d" % (year_min, year_max))
         elif year_min:
