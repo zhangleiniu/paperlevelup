@@ -10,6 +10,8 @@ sys.path.insert(0, str(SCRIPTS))
 
 import collect
 from common import Sidecar
+from metadata_overrides import (apply_overrides, load_overrides, save_overrides,
+                                set_entries)
 from report import render
 from sources import merge_records
 from sources.openalex import OpenAlexSource
@@ -110,6 +112,61 @@ class ReportTests(unittest.TestCase):
             output = render(sidecar)
 
         self.assertIn("1 identified (0 archer, 1 OpenAlex), 0 local only", output)
+
+
+class MetadataOverrideTests(unittest.TestCase):
+    def test_override_is_evidence_bearing_and_preserves_identity(self):
+        with tempfile.TemporaryDirectory() as raw:
+            sidecar = Sidecar(Path(raw))
+            sidecar.entries["paper.pdf"] = {
+                "key": "paper.pdf",
+                "ids": {"openalex": "W1"},
+                "authors": [],
+                "venue": None,
+                "provenance": {"title": "openalex"},
+            }
+            data = {"version": 1, "records": {}}
+            set_entries(sidecar, data, [{
+                "key": "paper.pdf",
+                "authors": ["A. Author", "B. Author"],
+                "venue": "Example Venue",
+                "evidence": "PDF first page",
+            }])
+            save_overrides(sidecar, data)
+            applied = apply_overrides(sidecar)
+
+            rec = sidecar.entries["paper.pdf"]
+            self.assertEqual(rec["ids"], {"openalex": "W1"})
+            self.assertEqual(rec["authors"], ["A. Author", "B. Author"])
+            self.assertEqual(rec["venue"], "Example Venue")
+            self.assertEqual(rec["provenance"]["authors"], "metadata_override")
+            self.assertEqual(rec["metadata_override"]["evidence"],
+                             "PDF first page")
+            self.assertEqual(applied, [{
+                "key": "paper.pdf", "fields": ["authors", "venue"]}])
+
+    def test_override_ledger_round_trips(self):
+        with tempfile.TemporaryDirectory() as raw:
+            sidecar = Sidecar(Path(raw))
+            sidecar.entries["paper.pdf"] = {"key": "paper.pdf"}
+            data = {"version": 1, "records": {}}
+            set_entries(sidecar, data, [{
+                "key": "paper.pdf",
+                "authors": ["A. Author"],
+                "evidence": "PDF title page",
+            }])
+            save_overrides(sidecar, data)
+            self.assertEqual(load_overrides(sidecar), data)
+
+    def test_override_rejects_unknown_pdf_key(self):
+        with tempfile.TemporaryDirectory() as raw:
+            sidecar = Sidecar(Path(raw))
+            with self.assertRaisesRegex(ValueError, "exact topic PDF basename"):
+                set_entries(sidecar, {"version": 1, "records": {}}, [{
+                    "key": "missing.pdf",
+                    "authors": ["A. Author"],
+                    "evidence": "PDF first page",
+                }])
 
 
 class OpenAlexPdfTests(unittest.TestCase):

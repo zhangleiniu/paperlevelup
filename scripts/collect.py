@@ -26,6 +26,7 @@ import sys
 
 from common import (Sidecar, add_topic_arg, load_config, parse_filename,
                     print_json, scan_pdfs)
+from metadata_overrides import apply_overrides
 from sources import get_source, merge_records
 
 ABSTRACT_RE = re.compile(r"(?im)^[^\S\n]*abstract[^\n]{0,40}$")
@@ -340,6 +341,9 @@ def main():
             if error:
                 failed += 1
 
+    # Evidence-bearing local corrections are the final metadata authority and
+    # are deliberately re-applied after every source refresh.
+    applied_overrides = apply_overrides(sidecar)
     sidecar.save()
 
     summary = {
@@ -368,6 +372,7 @@ def main():
         "dropped_missing_from_disk": removed,
         "source_errors": source_errors,
         "problems": problems,
+        "metadata_overrides_applied": applied_overrides,
         "next": "python collect.py --topic <dir> --digest   # read everything, then design the taxonomy",
     }
     print_json(summary)

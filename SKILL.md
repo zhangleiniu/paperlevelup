@@ -5,7 +5,7 @@ description: Organize a folder of research paper PDFs into categories, and find
   OpenAlex. Use when the user wants to organize, classify, sort, triage, or
   summarize a topic folder of papers; when they ask what papers they are missing
   on a topic, what to read next, or which papers are foundational; or when they
-  mention TOPIC.md or a Papers/<topic> folder.
+  mention TOPIC.md or a Papers topic folder.
 ---
 
 # Paper Level Up — agent workflow
@@ -43,6 +43,7 @@ current directory contains PDFs, use the current directory and say so.
 | Script | Does |
 |---|---|
 | `collect.py` | Identify each PDF against every configured source, fall back to local text extraction, build the sidecar |
+| `metadata.py` | Create, validate, remove, and apply evidence-bearing metadata overrides when retrieval sources fail |
 | `organize.py` | Store the taxonomy and your per-paper analysis; move PDFs into category subfolders |
 | `report.py` | Write `TOPIC.md` |
 | `search.py` | Keyword recall across sources |
@@ -118,6 +119,27 @@ Rhetorical Status` is really `Summarizing Scientific Articles: Experiments with
 Relevance and Rhetorical Status`, which scores only 0.75 on similarity. The
 matcher accepts verbatim containment of 30+ characters for exactly this case,
 but a shorter truncation still needs your eye.
+
+#### Correct metadata only after retrieval fails
+
+When all configured sources fail or omit a required bibliographic field, verify
+the value against the PDF title page or another primary source, then record it
+through `metadata.py`:
+
+```bash
+python3 ~/.claude/skills/paperlevelup/scripts/metadata.py --topic "<dir>" --set '[
+  {"key":"[2026 VENUE]Paper.pdf", "authors":["A. Author"],
+   "venue":"Venue Name", "evidence":"PDF title page"}
+]'
+python3 ~/.claude/skills/paperlevelup/scripts/metadata.py --topic "<dir>" --check
+```
+
+The exact PDF basename is the key. Supported fields are title, authors, venue,
+year, DOI, and URL. Every record requires an evidence note. The script writes
+`.paperlevelup/metadata-overrides.json`, applies the fields to `papers.jsonl`,
+and marks per-field provenance as `metadata_override`. `collect.py` reapplies
+the ledger after every future source refresh. Never edit either file directly;
+use `--remove <PDF_BASENAME>` to withdraw a correction.
 
 ### Step 2: read the entire topic at once
 
