@@ -360,8 +360,11 @@ other paper and regenerate the report.
 it has. OpenAlex only yields a file when the work is open access *and* carries a
 recognised licence — we do not follow landing pages, retry past paywalls, or
 guess at unlabelled licences. A paywalled paper comes back as `no-pdf` with its
-DOI. Pass that DOI on to the user so they can use their own institutional
-access; do not go looking for the PDF elsewhere.
+DOI. If the search result listed `other_ids` (OpenAlex often holds a preprint
+and its proceedings version as separate works under one title), try those ids
+before giving up — one of them may be open access. Otherwise pass the DOI on to
+the user so they can use their own institutional access; do not go looking for
+the PDF elsewhere.
 
 ### Without a folder
 
@@ -407,8 +410,9 @@ for a curated paper list (an awesome list, a related-work section).
   than letting a half-covered graph pass as a complete one.
 - **Never fuse rankings across sources** — paper-retrieval, archer keyword
   search, OpenAlex and the citation graph each rank by their own scoring.
-  Dedup by DOI or normalised title is bookkeeping and belongs in a script; deciding that one backend's third result
-  beats another's first is judgement and belongs in the conversation.
+  Dedup by DOI or normalised title is bookkeeping and belongs in a script;
+  deciding that one backend's third result beats another's first is judgement
+  and belongs in the conversation.
 - **Ask when it is genuinely ambiguous.** A wrong category quietly poisons the
   report; a question costs one turn.
 - **Everything is re-runnable.** `collect.py` skips work already done unless

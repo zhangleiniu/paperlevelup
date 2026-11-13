@@ -164,6 +164,13 @@ class RetrievalChannelTests(unittest.TestCase):
             result = run_main(collect, ["--topic", raw, "--known-ids"])
         self.assertEqual(result["exclude_ids"], ["uuid-a"])
         self.assertEqual(result["papers_in_folder"], 2)
+        self.assertNotIn("warning", result)
+
+    def test_known_ids_warns_on_uncollected_folder(self):
+        with tempfile.TemporaryDirectory() as raw:
+            result = run_main(collect, ["--topic", raw, "--known-ids"])
+        self.assertEqual(result["exclude_ids"], [])
+        self.assertIn("warning", result)
 
 
 class ReportTests(unittest.TestCase):

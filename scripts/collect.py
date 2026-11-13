@@ -212,10 +212,14 @@ def main():
         return
     if args.known_ids:
         ids = sidecar.known_archer_ids()
-        print_json({"exclude_ids": ids, "count": len(ids),
-                    "papers_in_folder": len(sidecar.entries),
-                    "note": "archer ids are the paper_ids paper-retrieval returns; "
-                            "papers no archer record matched are not in this list"})
+        out = {"exclude_ids": ids, "count": len(ids),
+               "papers_in_folder": len(sidecar.entries),
+               "note": "archer ids are the paper_ids paper-retrieval returns; "
+                       "papers no archer record matched are not in this list"}
+        if not sidecar.entries:
+            out["warning"] = ("no papers recorded for this folder yet; run collect.py "
+                              "--topic <dir> first, or this list excludes nothing")
+        print_json(out)
         return
 
     papers, problems = scan_pdfs(sidecar.topic)
