@@ -195,6 +195,9 @@ def main():
                     help="print collected abstracts instead of collecting")
     ap.add_argument("--digest-chars", type=int, default=2500,
                     help="per-paper text budget in --digest output")
+    ap.add_argument("--known-ids", action="store_true",
+                    help="print the archer ids of the papers already in the folder "
+                         "(for paper-retrieval's filters.exclude_ids) instead of collecting")
     ap.add_argument("--sources", default=None,
                     help="comma-separated, in query/primary-source order "
                          "(default: config 'sources', else archer,openalex)")
@@ -206,6 +209,13 @@ def main():
 
     if args.digest:
         cmd_digest(sidecar, args.digest_chars)
+        return
+    if args.known_ids:
+        ids = sidecar.known_archer_ids()
+        print_json({"exclude_ids": ids, "count": len(ids),
+                    "papers_in_folder": len(sidecar.entries),
+                    "note": "archer ids are the paper_ids paper-retrieval returns; "
+                            "papers no archer record matched are not in this list"})
         return
 
     papers, problems = scan_pdfs(sidecar.topic)

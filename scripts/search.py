@@ -22,11 +22,16 @@ Usage:
     python search.py --topic <dir> --keywords "..." --year-min 2022 --venue emnlp,acl
     python search.py --topic <dir> --keywords "..." --sources openalex
     python search.py --topic <dir> --keywords "..." --include-known
+    python search.py --keywords "..." --sources openalex     # no folder involved
+
+Inside the 15 venues of the user's library, the paper-retrieval MCP tools are the
+stronger channel (full text, embeddings, citation graph, reranking); see SKILL.md.
+This script stays the channel for OpenAlex, and archer keyword search is kept as
+an exact-term cross-check and as the fallback when that service is unavailable.
 """
 import argparse
 
-from common import (Sidecar, add_topic_arg, load_config, norm_title,
-                    print_json)
+from common import Sidecar, load_config, norm_title, print_json
 from sources import get_source
 
 
@@ -51,7 +56,10 @@ def dedup_key(cand: dict) -> str:
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    add_topic_arg(ap)
+    ap.add_argument("--topic", default=None,
+                    help="path to the topic folder; omit it for a search that is not "
+                         "tied to a folder (nothing is filtered as already known, "
+                         "nothing is cached)")
     ap.add_argument("--keywords", required=True,
                     help="comma-separated queries; each is searched separately "
                          "and results are merged")
@@ -82,7 +90,7 @@ def main():
     if not queries:
         raise SystemExit("--keywords produced no usable queries")
 
-    sidecar = Sidecar(args.topic)
+    sidecar = Sidecar(args.topic) if args.topic else None
     config = load_config()
     if args.match_any:
         config = dict(config, matching_strategy="last")
@@ -91,11 +99,11 @@ def main():
         names = config.get("sources") or ["archer"]
 
     venues = [v.strip() for v in args.venue.split(",")] if args.venue else None
-    cache_dir = None if args.no_cache else sidecar.cache_dir
+    cache_dir = None if (args.no_cache or sidecar is None) else sidecar.cache_dir
 
-    known_uids = set(sidecar.known_uids())
-    known_titles = sidecar.known_titles()
-    known_dois = sidecar.known_dois()
+    known_uids = set(sidecar.known_uids()) if sidecar else set()
+    known_titles = sidecar.known_titles() if sidecar else set()
+    known_dois = sidecar.known_dois() if sidecar else set()
 
     merged: dict[str, dict] = {}
     errors: list[dict] = []
@@ -144,9 +152,18 @@ def main():
                 continue
             # Same paper from a second source: union the evidence, keep the
             # richer abstract, and never average the two ranks.
-            slot["found_by"].append(name)
-            slot["ids"][cand["source"]] = cand["id"]
-            slot["rank_in_source"][name] = cand.get("best_rank", 0)
+            if name in slot["found_by"]:
+                # The same source returned a second work with this title (OpenAlex often
+                # holds a preprint and its proceedings version as separate works). Keep
+                # the first id, which `uid` already names, record the other, and keep
+                # the better rank; listing the source twice would fake a two-source hit.
+                slot.setdefault("other_ids", []).append("%s:%s" % (cand["source"], cand["id"]))
+                slot["rank_in_source"][name] = min(slot["rank_in_source"][name],
+                                                   cand.get("best_rank", 0))
+            else:
+                slot["found_by"].append(name)
+                slot["ids"][cand["source"]] = cand["id"]
+                slot["rank_in_source"][name] = cand.get("best_rank", 0)
             slot["doi"] = slot.get("doi") or cand.get("doi")
             slot["cited_by_count"] = (slot.get("cited_by_count")
                                       or cand.get("cited_by_count"))
@@ -159,6 +176,7 @@ def main():
     candidates = []
     for cand in merged.values():
         in_topic = (any("%s:%s" % (s, i) in known_uids for s, i in cand["ids"].items())
+                    or any(u in known_uids for u in cand.get("other_ids", []))
                     or norm_title(cand.get("title")) in known_titles
                     or (cand.get("doi") or "").lower() in known_dois)
         cand["already_in_topic"] = in_topic

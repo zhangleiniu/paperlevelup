@@ -1,3 +1,6 @@
+import contextlib
+import io
+import json
 import sys
 import tempfile
 import unittest
@@ -98,6 +101,69 @@ class MultiSourceCollectionTests(unittest.TestCase):
         self.assertNotIn("cited_by_count", by_source["archer"])
         self.assertEqual(by_source["openalex"]["cited_by_count"], 12)
         self.assertEqual(by_source["openalex"]["doi"], "10.1/example")
+
+
+class FakeSearchSource:
+    capabilities = frozenset({"search"})
+    last_errors = []
+
+    def search(self, queries, **_kwargs):
+        return [{"source": "openalex", "id": "W1", "uid": "openalex:W1",
+                 "title": "Found paper", "year": 2025, "abstract": "text",
+                 "matched_queries": list(queries), "best_rank": 1}]
+
+    def stats(self):
+        return {"source": "openalex"}
+
+
+def run_main(module, argv):
+    out = io.StringIO()
+    with mock.patch.object(sys, "argv", [module.__name__ + ".py"] + argv), \
+            contextlib.redirect_stdout(out):
+        module.main()
+    return json.loads(out.getvalue())
+
+
+class RetrievalChannelTests(unittest.TestCase):
+    def test_search_runs_without_a_topic_folder(self):
+        import search
+        with mock.patch.object(search, "get_source",
+                               side_effect=lambda *_a, **_k: FakeSearchSource()):
+            result = run_main(search, ["--keywords", "a query", "--sources", "openalex"])
+        self.assertEqual([c["title"] for c in result["candidates"]], ["Found paper"])
+        self.assertFalse(result["candidates"][0]["already_in_topic"])
+
+    def test_same_source_duplicate_title_is_not_a_two_source_hit(self):
+        import search
+
+        class TwoWorksSameTitle(FakeSearchSource):
+            def search(self, queries, **_kwargs):
+                return [dict(uid="openalex:W1", source="openalex", id="W1", title="Same Title",
+                             best_rank=3, matched_queries=["q"]),
+                        dict(uid="openalex:W2", source="openalex", id="W2", title="Same Title",
+                             best_rank=1, matched_queries=["q"])]
+
+        with mock.patch.object(search, "get_source",
+                               side_effect=lambda *_a, **_k: TwoWorksSameTitle()):
+            result = run_main(search, ["--keywords", "q", "--sources", "openalex"])
+        [cand] = result["candidates"]
+        self.assertEqual(cand["found_by"], ["openalex"])
+        self.assertEqual(cand["ids"], {"openalex": "W1"})
+        self.assertEqual(cand["uid"], "openalex:W1")
+        self.assertEqual(cand["other_ids"], ["openalex:W2"])
+        self.assertEqual(cand["rank_in_source"], {"openalex": 1})
+
+    def test_known_ids_lists_archer_ids_for_exclusion(self):
+        with tempfile.TemporaryDirectory() as raw:
+            sidecar = Sidecar(Path(raw))
+            sidecar.entries = {
+                "a.pdf": {"key": "a.pdf", "ids": {"archer": "uuid-a"}},
+                "b.pdf": {"key": "b.pdf", "ids": {"openalex": "W2"}},
+            }
+            sidecar.save()
+            result = run_main(collect, ["--topic", raw, "--known-ids"])
+        self.assertEqual(result["exclude_ids"], ["uuid-a"])
+        self.assertEqual(result["papers_in_folder"], 2)
 
 
 class ReportTests(unittest.TestCase):

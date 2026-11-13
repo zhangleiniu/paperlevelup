@@ -16,7 +16,7 @@ missing.
 > **Status: personal setup, published as a working reference.**
 >
 > One of the two sources is *my* paper library — a private host (`archer`)
-> running a SQLite corpus of ~179k papers, a Meilisearch index over it, and a
+> running a SQLite corpus of ~185k papers, a Meilisearch index over it, and a
 > PDF store. That library is not part of this repo and is not something you can
 > stand up from it.
 >
@@ -134,6 +134,8 @@ python3 $PLU/organize.py --topic "$TOPIC" --sync            # re-apply the layou
 # discovery
 python3 $PLU/search.py --topic "$TOPIC" --keywords "term one,term two" --year-min 2022
 python3 $PLU/search.py --topic "$TOPIC" --keywords "..." --sources openalex
+python3 $PLU/search.py --keywords "..." --sources openalex     # no folder
+python3 $PLU/collect.py --topic "$TOPIC" --known-ids          # ids to exclude in paper-retrieval
 python3 $PLU/graph.py  --topic "$TOPIC" --mode gaps
 python3 $PLU/fetch.py  --topic "$TOPIC" --ids "openalex:W123,archer:<uuid>" --category X
 
@@ -178,7 +180,7 @@ previously untried sources unless `--force` is passed.
 
 |  | **archer** (private) | **OpenAlex** (public) |
 |---|---|---|
-| Coverage | 179k papers, 15 AI/ML venues | ~250M works, every venue |
+| Coverage | ~185k papers, 15 AI/ML venues | ~250M works, every venue |
 | PDFs | all | open access only (~43% of matches) |
 | Abstracts | ~96% | ~76% |
 | Citation edges | 3.8M, between corpus papers only | global, but present for ~48% of works |
@@ -198,19 +200,31 @@ Set `openalex.mailto` in `config/remote.local.json` to join OpenAlex's polite
 pool (10 req/s, 100k/day). Responses are cached under
 `<topic>/.paperlevelup/cache/`, so a re-run costs nothing.
 
-## Two channels for discovery
+## Channels for discovery
+
+**Library search** (optional, private). If the agent has the tools of a
+`paper-retrieval` MCP server connected — a separate retrieval service over the
+same library, combining full-text BM25, embeddings, citation-graph expansion and
+a reranker, and returning an evidence passage per result — `SKILL.md` makes it
+the main search channel for the library. It returns archer's paper ids, so
+its results can be fetched like any other. Without it, the skill falls back to
+archer keyword search. On one curated list, with the same 23 queries over the
+same library, it recalled 30 of 38 known papers against 24 for keyword search;
+keyword search still added 5 the service missed, so `SKILL.md` keeps one
+keyword pass as a cross-check. The service itself is not part of this repo.
 
 **Keyword** (`search.py`) searches every configured source. It works for every
 paper in your folder, because the keywords come from reading the papers, not
-from the papers being indexed.
+from the papers being indexed. For OpenAlex it is the only search channel;
+`--topic` may be omitted for a search that is not tied to a folder.
 
 **Citation** (`graph.py`) walks the citation graph. Its `gaps` mode ranks by
 lift rather than raw citation count: raw count just returns the field's famous
 papers, while lift finds papers heavily cited inside your topic and obscure
 outside it.
 
-Results are reported **one block per source, never merged into a single
-ranking**. Lift needs a popularity denominator and the two do not share one:
+Results are reported **one block per source or channel, never merged into a
+single ranking**. Lift needs a popularity denominator and the two do not share one:
 archer can only count citations inside its own corpus, OpenAlex knows the global
 count — which is what lift was always reaching for. Merging them would produce
 numbers that look comparable and are not.

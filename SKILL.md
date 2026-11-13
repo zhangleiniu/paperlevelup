@@ -1,18 +1,23 @@
 ---
 name: paperlevelup
 description: Organize a folder of research paper PDFs into categories, and find
-  related papers via the user's own 179k-paper library on the archer host plus
-  OpenAlex. Use when the user wants to organize, classify, sort, triage, or
-  summarize a topic folder of papers; when they ask what papers they are missing
-  on a topic, what to read next, or which papers are foundational; or when they
-  mention TOPIC.md or a Papers topic folder.
+  papers via the user's own ~185k-paper AI/ML library (searched through the
+  paper-retrieval MCP tools when they are connected, otherwise directly on the
+  archer host) plus OpenAlex for every other venue. Use when the user wants to
+  organize, classify, sort, triage, or summarize a topic folder of papers; when
+  they ask what papers they are missing on a topic, what to read next, or which
+  papers are foundational; when they ask for papers on a topic, related work for
+  a paper, or baselines to compare with, with or without a folder; when they
+  update a curated paper list; or when they mention TOPIC.md or a Papers topic
+  folder.
 ---
 
 # Paper Level Up — agent workflow
 
 This file is your operating manual. The user keeps one folder per topic, full of
 PDFs named `[year VENUE]title.pdf`. You organize that folder, and you help
-expand it from the user's own paper library.
+expand it from the user's own paper library and OpenAlex. The same retrieval
+also answers paper questions that involve no folder (see "Without a folder").
 
 **The division of labour is the whole design.** The scripts do retrieval and
 bookkeeping and make no judgements. Every judgement — what a paper is about,
@@ -46,7 +51,7 @@ current directory contains PDFs, use the current directory and say so.
 | `metadata.py` | Create, validate, remove, and apply evidence-bearing metadata overrides when retrieval sources fail |
 | `organize.py` | Store the taxonomy and your per-paper analysis; move PDFs into category subfolders |
 | `report.py` | Write `TOPIC.md` |
-| `search.py` | Keyword recall across sources |
+| `search.py` | Keyword recall across sources (OpenAlex; archer as cross-check and fallback) |
 | `graph.py` | Citation recall: gaps, forward citations, internal structure |
 | `fetch.py` | Copy a discovered paper's PDF into the topic folder |
 
@@ -55,16 +60,32 @@ State lives in `<topic>/.paperlevelup/` — `papers.jsonl` (one record per paper
 re-runs stay off the network). The PDFs themselves, arranged in category
 subfolders, are the visible artefact.
 
-## The two sources
+## The sources
 
-They are **not interchangeable** — each is authoritative about different things,
-and every script takes `--sources` to pick between them (default: both, archer
-first).
+The library is reached two ways. When the **paper-retrieval MCP tools**
+(`find_papers`, `find_related_papers`, `get_paper`, `search_passages`,
+`exact_search`, `get_citation_neighbors`, `get_research_profile`) are available,
+they are the search channel for the library: full-text passages, BM25 and
+embeddings fused and reranked, plus citation-graph expansion, with an evidence
+passage for every result. They return the same paper ids as archer, so a
+result's `paper_id` is directly usable as `archer:<paper_id>` by `fetch.py` and
+`graph.py`. The exception is a service snapshot older than archer's live
+library (the `snapshot` field names it): a paper whose title, venue or year
+changed since may carry a different id, and `fetch.py` will not find it. Then
+look the paper up by title with `search.py --sources archer` and fetch the id
+that returns. They cover only the library, never OpenAlex. The scripts below use
+archer directly for identification, PDFs and citation edges, and keep archer
+keyword search as a cross-check and as the fallback when the tools are absent
+or return an error.
+
+archer and OpenAlex are **not interchangeable** — each is authoritative about
+different things, and every script takes `--sources` to pick between them
+(default: both, archer first).
 
 |  | **archer** | **OpenAlex** |
 |---|---|---|
 | Reached by | SSH, nothing installed there | public HTTP API, no key |
-| Coverage | 179k papers, **15 AI/ML venues only**, 1979–2026 | ~250M works, every venue |
+| Coverage | ~185k papers, **15 AI/ML venues only**, 1979–2026 | ~250M works, every venue |
 | PDFs | **all of them** | open-access only (~43% of matches) |
 | Abstracts | ~96% | ~76% |
 | Citation edges | 3.8M, but only *between corpus papers* | global, but **~48% of works** |
@@ -224,27 +245,67 @@ changed.
 
 The user's real process is: pull keywords out of what they already have, search,
 read abstracts, decide. It is subjective and it does not want to be automated
-into a score. So: **the scripts over-recall, you judge, the user steers.**
+into a score. So: **the tools over-recall, you judge, the user steers.**
 
-### Keyword channel — always applies
+Run the channels below and present what they return in **separate blocks, one
+per channel** (library, OpenAlex, citation graph). Each ranks by its own
+scoring; do not merge them into one ranked list.
+
+### Library channel — paper-retrieval tools, when available
+
+Derive concrete queries from what you read in the digest: the topic's terms,
+its sub-problems, the names its papers use. Call `find_papers` once per query.
+
+```
+collect.py --topic "<dir>" --known-ids      -> exclude_ids for the papers already in the folder
+find_papers(query="<one concrete query>", original_query="<the same query>",
+            k=40, filters={"exclude_ids": [...], "year_min": ...})
+```
+
+- **Several concrete queries, not one abstract one.** For a folder or a curated
+  list, each query is its own question: pass it as both `query` and
+  `original_query`, k 40–100. A paragraph describing the topic as the query
+  recalls less than a handful of specific phrases (measured on one list: 25 vs
+  30 of 38 known papers).
+- **`find_related_papers` for a few seeds only** — the folder's central papers,
+  or the one paper the user asked about (`paper_id`, `url`, or `text` = title +
+  abstract for a paper outside the library). Run on every paper in a folder, its
+  citation-graph channel mostly returns field-wide classics (BERT, Adam, RAG).
+  Add `relation_type="baseline"` when the user wants baselines.
+- **Judge from the `evidence` passage** each result carries, and cite the
+  result's `url`, never its internal id. A result found only by the `graph`
+  channel (see `ranks`) is a citation neighbour of the top hits, often a
+  well-known paper the user has.
+- The first call after a quiet period can take ~20 s while the service reloads.
+  If the tools are missing or return an error, say so and use the archer keyword
+  search below instead.
+
+### Keyword channel — OpenAlex always, archer as cross-check
 
 ```bash
 python3 ~/.claude/skills/paperlevelup/scripts/search.py --topic "<dir>" \
-  --keywords "citation intent classification,related work generation"
+  --keywords "..." --sources openalex        # every venue outside the library
+python3 ~/.claude/skills/paperlevelup/scripts/search.py --topic "<dir>" \
+  --keywords "citation intent classification,related work generation" \
+  --sources archer --per-query 40            # exact-term cross-check of the library
 python3 ~/.claude/skills/paperlevelup/scripts/search.py --topic "<dir>" \
   --keywords "..." --year-min 2022 --venue emnlp,acl
-python3 ~/.claude/skills/paperlevelup/scripts/search.py --topic "<dir>" \
-  --keywords "..." --sources openalex        # when the topic lives outside archer's venues
 ```
 
-Derive the keywords from what you read in the digest. Run several rounds with
-different phrasings; each returns abstracts, so read them and refine.
+OpenAlex is the only channel for SIGIR, KDD, WWW, CIKM, journals and arXiv;
+run it whenever the topic reaches past the 15 library venues. Run several rounds
+with different phrasings; each returns abstracts, so read them and refine.
 
-The two backends behave differently and it shows. archer requires every term of
-a query to appear — precise, but it can come back empty, in which case shorten
-the phrase rather than reaching for `--match-any`. OpenAlex searches titles and
-abstracts by default and its tail can still be noisy; `--fulltext` broadens it
-further and should be reserved for a scoped query that is too thin.
+archer keyword search is still worth one pass with the same keywords even when
+the paper-retrieval tools work: it is cheap, and a paper whose title contains
+the query verbatim can rank below k after reranking (on one list it added 5 of
+38 known papers the tools missed). It is not a substitute: it requires every
+term of a query to appear, so papers worded differently from the query never
+surface, and its matches are often coincidental. If a strict query comes back
+empty, shorten the phrase rather than reaching for `--match-any`. OpenAlex
+searches titles and abstracts by default and its tail can still be noisy;
+`--fulltext` broadens it further and should be reserved for a scoped query that
+is too thin.
 
 `rank_in_source` is each backend's own ordering and is **not comparable across
 sources** — the output says so, and you should not treat a rank-1 from one as
@@ -276,8 +337,10 @@ communities they cover barely overlap.
 ### Then judge, and ask before fetching
 
 Present candidates as a short list with your reasoning, grouped by why they
-surfaced. Never dump raw script output at the user. Say what you would keep and
-what you would drop.
+surfaced, in the conversation. Never dump raw script output at the user, and do
+not write candidate lists or other intermediate results to files or new
+directories unless the user asks for one. Say what you would keep and what you
+would drop.
 
 **Do not fetch anything until the user has said which ones they want.** Pulling
 PDFs into their folder changes their filesystem, and the whole point of this
@@ -288,9 +351,10 @@ python3 ~/.claude/skills/paperlevelup/scripts/fetch.py --topic "<dir>" \
   --ids "openalex:W123,archer:<uuid>" --category "<existing category>"
 ```
 
-Ids are namespaced; a bare id means archer. This copies the PDFs down, names
-them to the convention, and registers them as already resolved. Then classify
-them like any other paper and regenerate the report.
+Ids are namespaced; a bare id means archer. A paper-retrieval result is fetched
+as `archer:<paper_id>`. This copies the PDFs down, names them to the
+convention, and registers them as already resolved. Then classify them like any
+other paper and regenerate the report.
 
 **Not everything can be fetched, and that is not a bug.** archer serves any PDF
 it has. OpenAlex only yields a file when the work is open access *and* carries a
@@ -298,6 +362,32 @@ recognised licence — we do not follow landing pages, retry past paywalls, or
 guess at unlabelled licences. A paywalled paper comes back as `no-pdf` with its
 DOI. Pass that DOI on to the user so they can use their own institutional
 access; do not go looking for the PDF elsewhere.
+
+### Without a folder
+
+Not every request comes with a topic folder: "papers on X", "work related to
+this paper", "baselines for Y", "where does a paper discuss Z", or new entries
+for a curated paper list (an awesome list, a related-work section).
+
+- **A single question** ("which papers do X?"): call `find_papers` with the
+  user's question verbatim as both `query` and `original_query`, k=20 unless
+  they ask for more. Report every result in the order returned, each with title,
+  venue, year, `url` and the line of its evidence that answers the question, and
+  mark the strongest. Rephrase and search again only if the results clearly miss
+  the question, keeping `original_query` verbatim; for more coverage raise `k`
+  rather than splitting the question into facets. Pass already-shown papers in
+  `filters.exclude_ids` on follow-ups.
+- **A paper**: `find_related_papers` (`relation_type="baseline"` for baselines).
+- **A claim about a specific paper** (does it use dataset X, what is its method,
+  who cites it): `search_passages`, `get_paper(section=...)`, `exact_search`,
+  `get_citation_neighbors`, `get_research_profile`. These check candidates; they
+  are not for finding more papers.
+- **A curated list**: treat it like a folder — several concrete queries, a few
+  seeds, the archer cross-check — and drop what the list already holds by DOI,
+  URL, openreview id and normalized title, including list titles that contain a
+  candidate's title.
+- **Outside the library's venues**: `search.py --keywords "..." --sources
+  openalex` without `--topic`.
 
 ---
 
@@ -315,8 +405,9 @@ access; do not go looking for the PDF elsewhere.
   archer misses whole *venues*, OpenAlex misses *reference lists* for preprints.
   When you use the citation channel, quote the ratio the script prints rather
   than letting a half-covered graph pass as a complete one.
-- **Never fuse rankings across sources.** Dedup by DOI or normalised title is
-  bookkeeping and belongs in a script; deciding that one backend's third result
+- **Never fuse rankings across sources** — paper-retrieval, archer keyword
+  search, OpenAlex and the citation graph each rank by their own scoring.
+  Dedup by DOI or normalised title is bookkeeping and belongs in a script; deciding that one backend's third result
   beats another's first is judgement and belongs in the conversation.
 - **Ask when it is genuinely ambiguous.** A wrong category quietly poisons the
   report; a question costs one turn.
