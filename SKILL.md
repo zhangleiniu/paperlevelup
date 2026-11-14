@@ -69,11 +69,11 @@ they are the search channel for the library: full-text passages, BM25 and
 embeddings fused and reranked, plus citation-graph expansion, with an evidence
 passage for every result. They return the same paper ids as archer, so a
 result's `paper_id` is directly usable as `archer:<paper_id>` by `fetch.py` and
-`graph.py`. The exception is a service snapshot older than archer's live
-library (the `snapshot` field names it): a paper whose title, venue or year
-changed since may carry a different id, and `fetch.py` will not find it. Then
-look the paper up by title with `search.py --sources archer` and fetch the id
-that returns. They cover only the library, never OpenAlex. The scripts below use
+`graph.py`. When the library database is built from the same pipeline run as
+the service (the `snapshot` field names it), the ids always agree. If they
+differ, a paper whose title, venue or year changed between the runs may carry a
+different id, and `fetch.py` will not find it. Then look the paper up by title
+with `search.py --sources archer` and fetch the id that returns. They cover only the library, never OpenAlex. The scripts below use
 archer directly for identification, PDFs and citation edges, and keep archer
 keyword search as a cross-check and as the fallback when the tools are absent
 or return an error.

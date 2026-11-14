@@ -131,7 +131,7 @@ def archer_block(sidecar, args):
         "limit": args.limit, "rank": args.rank,
         "abstract_chars": args.abstract_chars,
     })
-    block["lift_denominator"] = "citations within archer's corpus"
+    block["lift_denominator"] = "citations within the library corpus"
     return block
 
 

@@ -2,10 +2,11 @@
 
 Design notes
 ------------
-Every heavy operation runs *on the library host* (archer). We ship a short Python
-program over SSH stdin instead of deploying code there, so there is nothing to
-install or keep in sync on the remote side. The Meilisearch API key is read from
-the library host's own .env at run time and never travels to this machine.
+Every heavy operation runs *on the library host* (`host` in the config). We ship
+a short Python program over SSH stdin instead of deploying code there, so there is
+nothing to install or keep in sync on the remote side. Keyword search uses the
+database's own FTS5 table, or a Meilisearch index whose API key is read from the
+library host's own .env at run time and never travels to this machine.
 
 The local topic folder is the source of truth for *which papers are in scope*.
 Everything the agent computes lives beside it in `<topic>/.paperlevelup/`.
@@ -51,7 +52,8 @@ _con = None
 def db():
     global _con
     if _con is None:
-        _con = sqlite3.connect(CONFIG["db_path"])
+        # read-only: the library database belongs to the host, never to us
+        _con = sqlite3.connect("file:%s?mode=ro" % CONFIG["db_path"], uri=True)
         _con.row_factory = sqlite3.Row
     return _con
 
@@ -71,7 +73,28 @@ def meili_key():
         raise RuntimeError("MEILI_KEY not found on the library host")
     return _key
 
+def fts_search(query, limit=20, matching_strategy=None):
+    """Keyword search over the database's own FTS5 table `papers_fts`, for a
+    library host without Meilisearch (`"search_backend": "fts5"`). Same
+    contract as the Meilisearch path: hits with `id` and `title`, best first.
+    "all" requires every term; otherwise any term counts, ranked by BM25 with
+    the title weighted highest. The last term also matches as a prefix."""
+    import re
+    terms = re.findall(r"\w+", (query or "").lower())
+    if not terms:
+        return []
+    quoted = ['"%s"' % t for t in terms]
+    quoted[-1] += "*"
+    expr = (" AND " if matching_strategy == "all" else " OR ").join(quoted)
+    rows = db().execute(
+        "select p.id, p.title from papers_fts join papers p on p.rowid = papers_fts.rowid "
+        "where papers_fts match ? order by bm25(papers_fts, 10.0, 1.0, 2.0, 0.5) limit ?",
+        (expr, limit)).fetchall()
+    return [dict(r) for r in rows]
+
 def meili_search(query, limit=20, matching_strategy=None):
+    if CONFIG.get("search_backend", "meili") == "fts5":
+        return fts_search(query, limit, matching_strategy)
     payload = {"q": query, "limit": limit}
     if matching_strategy:
         # "all" makes every term mandatory. The default drops trailing terms,

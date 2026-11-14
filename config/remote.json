@@ -1,8 +1,9 @@
 {
-  "host": "archer",
-  "mustcite_root": "/Users/lei/work/mustcite",
-  "db_path": "/Users/lei/work/mustcite/data/papers.db",
-  "pdf_root": "/Volumes/MyData/mustcite",
+  "host": "library-host",
+  "db_path": "/path/on/host/papers.db",
+  "pdf_root": "/path/on/host/pdf-root",
+  "search_backend": "fts5",
+  "mustcite_root": "/path/on/host/mustcite",
   "meili_url": "http://127.0.0.1:7700",
   "meili_index": "papers",
   "match_threshold": 0.85,

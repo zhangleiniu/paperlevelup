@@ -68,17 +68,19 @@ if it was already running. Codex supports symlinked skill directories, so do
 not copy the project into both locations: keep editing the canonical checkout
 under `~/.claude/skills/paperlevelup/`.
 
-You only need SSH access when using the private archer source. For an
-OpenAlex-only setup, set `"sources": ["openalex"]`. The archer values tracked in
-`config/remote.json` are mine and will not resolve on your machine — they
-document the shape rather than providing a working public default:
+You only need SSH access when using the private library source (named
+`archer` in ids and `--sources` for historical reasons; the host is whatever
+`host` says). For an OpenAlex-only setup, set `"sources": ["openalex"]`. The
+values tracked in `config/remote.json` are placeholders that document the shape;
+put the real ones in `config/remote.local.json`:
 
 | Key | Meaning |
 |---|---|
 | `host` | SSH alias of the library host |
-| `db_path` | SQLite paper database on that host |
-| `pdf_root` | Where its PDFs live |
-| `meili_url` / `meili_index` | Meilisearch endpoint, as seen from that host |
+| `db_path` | SQLite paper database on that host (`papers`, `paper_references`) |
+| `pdf_root` | Directory that the database's relative `pdf_path` values resolve against |
+| `search_backend` | `fts5`: keyword search and title matching use the database's own `papers_fts` table (nothing else needed on the host). `meili`: a Meilisearch index, configured below |
+| `meili_url` / `meili_index` / `mustcite_root` | Meilisearch endpoint as seen from the host, and the directory whose `.env` holds `MEILI_KEY` (only for `meili`) |
 | `match_threshold` | Title similarity needed to call it the same paper (0.85) |
 
 Put machine-specific overrides in `config/remote.local.json` (gitignored) rather
