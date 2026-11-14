@@ -3,7 +3,7 @@ name: paperlevelup
 description: Organize a folder of research paper PDFs into categories, and find
   papers via the user's own ~185k-paper AI/ML library (searched through the
   paper-retrieval MCP tools when they are connected, otherwise directly on the
-  archer host) plus OpenAlex for every other venue. Use when the user wants to
+  library host over SSH) plus OpenAlex for every other venue. Use when the user wants to
   organize, classify, sort, triage, or summarize a topic folder of papers; when
   they ask what papers they are missing on a topic, what to read next, or which
   papers are foundational; when they ask for papers on a topic, related work for

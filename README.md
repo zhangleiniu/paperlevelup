@@ -15,10 +15,10 @@ missing.
 
 > **Status: personal setup, published as a working reference.**
 >
-> One of the two sources is *my* paper library — a private host (`archer`)
-> running a SQLite corpus of ~185k papers, a Meilisearch index over it, and a
-> PDF store. That library is not part of this repo and is not something you can
-> stand up from it.
+> One of the two sources is *my* paper library (`archer`) — a SQLite corpus of
+> ~185k papers with its own full-text index, and a PDF store, on a private
+> host reached over SSH. That library is not part of this repo and is not
+> something you can stand up from it.
 >
 > The other source is **OpenAlex**, which is public and needs no key. Setting
 > `"sources": ["openalex"]` in the config gives you identification, keyword
@@ -48,7 +48,8 @@ conversation, where you can redirect it. Nothing is hardcoded as a prompt.
 Retrieval and bookkeeping run in `scripts/` through a small source interface.
 The private archer adapter ships short programs over SSH stdin, while the
 OpenAlex adapter calls its public HTTP API directly. Nothing is installed on
-the library host, and its Meilisearch key never leaves that machine.
+the library host; with the optional Meilisearch backend, its key never leaves
+that machine.
 
 ## Setup
 
