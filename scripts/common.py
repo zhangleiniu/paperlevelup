@@ -78,19 +78,37 @@ def fts_search(query, limit=20, matching_strategy=None):
     library host without Meilisearch (`"search_backend": "fts5"`). Same
     contract as the Meilisearch path: hits with `id` and `title`, best first.
     "all" requires every term; otherwise any term counts, ranked by BM25 with
-    the title weighted highest. The last term also matches as a prefix."""
+    the title weighted highest. The last term also matches as a prefix.
+
+    BM25 alone loses short titles made of common words: "Universal
+    Transformers" or "Deep Equilibrium Models" rank below dozens of longer
+    titles and abstracts that repeat those words, so the paper itself never
+    reaches the candidate list. So up to half the slots first go to titles
+    containing the query as a phrase, shortest first -- the shortest such
+    title is the closest to an exact match."""
     import re
     terms = re.findall(r"\w+", (query or "").lower())
     if not terms:
         return []
+    base = ("select p.id, p.title from papers_fts join papers p "
+            "on p.rowid = papers_fts.rowid where papers_fts match ? ")
+    rows = []
+    if len(terms) >= 2:
+        rows = db().execute(base + "order by length(p.title) limit ?",
+                            ('title : "%s"' % " ".join(terms),
+                             max(1, limit // 2))).fetchall()
     quoted = ['"%s"' % t for t in terms]
     quoted[-1] += "*"
     expr = (" AND " if matching_strategy == "all" else " OR ").join(quoted)
-    rows = db().execute(
-        "select p.id, p.title from papers_fts join papers p on p.rowid = papers_fts.rowid "
-        "where papers_fts match ? order by bm25(papers_fts, 10.0, 1.0, 2.0, 0.5) limit ?",
+    rows += db().execute(
+        base + "order by bm25(papers_fts, 10.0, 1.0, 2.0, 0.5) limit ?",
         (expr, limit)).fetchall()
-    return [dict(r) for r in rows]
+    out, seen = [], set()
+    for r in rows:
+        if r["id"] not in seen:
+            seen.add(r["id"])
+            out.append(dict(r))
+    return out[:limit]
 
 def meili_search(query, limit=20, matching_strategy=None):
     if CONFIG.get("search_backend", "meili") == "fts5":
