@@ -372,6 +372,17 @@ Not every request comes with a topic folder: "papers on X", "work related to
 this paper", "baselines for Y", "where does a paper discuss Z", or new entries
 for a curated paper list (an awesome list, a related-work section).
 
+- **A specific paper the user half-remembers** ("the paper that showed…", "I read
+  a paper where…"): they want one paper identified, not a list. Call `find_papers`
+  with the question verbatim as `original_query` and its distinctive details
+  (method name, dataset, result, author) as `query`. A remembered venue or year
+  may be wrong: do not filter on it on the first call — use it to rank the
+  candidates, or filter with a year range of ±1. Give the best match first and say
+  which remembered details its evidence confirms and which it does not, then at
+  most 2 close alternatives; do not list the rest. If nothing fits, run
+  `exact_search` on a distinctive term or a guessed title (here it finds papers,
+  not only checks them), then `search.py --keywords "..." --sources openalex` —
+  the paper may be outside the library's venues — before saying it was not found.
 - **A single question** ("which papers do X?"): call `find_papers` with the
   user's question verbatim as both `query` and `original_query`, k=20 unless
   they ask for more. Report every result in the order returned, each with title,
