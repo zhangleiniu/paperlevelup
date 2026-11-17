@@ -373,16 +373,21 @@ this paper", "baselines for Y", "where does a paper discuss Z", or new entries
 for a curated paper list (an awesome list, a related-work section).
 
 - **A specific paper the user half-remembers** ("the paper that showed…", "I read
-  a paper where…"): they want one paper identified, not a list. Call `find_papers`
-  with the question verbatim as `original_query` and its distinctive details
-  (method name, dataset, result, author) as `query`. A remembered venue or year
-  may be wrong: do not filter on it on the first call — use it to rank the
-  candidates, or filter with a year range of ±1. Give the best match first and say
-  which remembered details its evidence confirms and which it does not, then at
-  most 2 close alternatives; do not list the rest. If nothing fits, run
-  `exact_search` on a distinctive term or a guessed title (here it finds papers,
-  not only checks them), then `search.py --keywords "..." --sources openalex` —
-  the paper may be outside the library's venues — before saying it was not found.
+  a paper where…", "which paper proposed…"): they want one paper identified, not
+  a list. Call `find_papers` with k=10, the question verbatim as
+  `original_query`, and as `query` your guess at its title or its distinctive
+  details (method name, dataset, result, author), in English. A remembered venue
+  or year may be wrong: do not filter on it on the first call — use it to rank
+  the candidates, or filter with a year range of ±1. If the paper is not clearly
+  among the results, run `exact_search` on a distinctive term or the guessed title
+  (here it finds papers, not only checks them); if the evidence for the best
+  match is thin, confirm it with `get_paper`. Give that paper first, as the
+  answer, say how sure you are and which remembered details its evidence confirms
+  and which it does not, then at most 2 close alternatives; do not list the rest
+  (this overrides "report every result" below, which still holds for every other
+  request). If nothing fits, run `search.py --keywords "..." --sources openalex`
+  — the paper may be outside the library's venues — before saying it was not
+  found.
 - **A single question** ("which papers do X?"): call `find_papers` with the
   user's question verbatim as both `query` and `original_query`, k=20 unless
   they ask for more. Report every result in the order returned, each with title,
@@ -391,6 +396,11 @@ for a curated paper list (an awesome list, a related-work section).
   the question, keeping `original_query` verbatim; for more coverage raise `k`
   rather than splitting the question into facets. Pass already-shown papers in
   `filters.exclude_ids` on follow-ups.
+- **Papers by an author** ("X's papers on Y"): put Y in `query` and X's full name
+  in `filters.authors` (also on `find_related_papers`) rather than recalling X's
+  papers yourself; initials do not match and namesakes are not told apart. If the
+  response's `notes` say the name has no papers, retry with a similar name it
+  suggests.
 - **A paper**: `find_related_papers` (`relation_type="baseline"` for baselines).
 - **A claim about a specific paper** (does it use dataset X, what is its method,
   who cites it): `search_passages`, `get_paper(section=...)`, `exact_search`,
