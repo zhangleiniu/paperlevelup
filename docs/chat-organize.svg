@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="780" height="640" viewBox="0 0 780 640" role="img" aria-label="~/Papers/CitationRecommendation">
+<rect x="0.5" y="0.5" width="779" height="639" rx="10" fill="#1d1e22" stroke="#3a3c42"/>
+<path d="M10.5 0.5 H769.5 A10 10 0 0 1 779.5 10.5 V34.5 H0.5 V10.5 A10 10 0 0 1 10.5 0.5 Z" fill="#2a2c31"/>
+<circle cx="22" cy="18" r="6" fill="#ff5f57"/><circle cx="42" cy="18" r="6" fill="#febc2e"/><circle cx="62" cy="18" r="6" fill="#28c840"/>
+<text x="390.0" y="22.5" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="12.5" fill="#a3a7af">~/Papers/CitationRecommendation</text>
+<g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" fill="#d4d6db">
+<rect x="18" y="53" width="201" height="23" rx="5" fill="#30333a"/>
+<text x="26" y="68" xml:space="preserve"><tspan fill="#8b9099">&gt; </tspan><tspan fill="#f3f4f6" font-weight="600">organize this folder</tspan></text>
+<text x="26" y="103" xml:space="preserve"><tspan fill="#e0915e">● </tspan><tspan>Identified most PDFs in your library and OpenAlex, and read the rest</tspan></text>
+<text x="26" y="124" xml:space="preserve"><tspan>  </tspan><tspan>from their own text. Having read them all, I&#x27;d group them like this:</tspan></text>
+<text x="26" y="145" xml:space="preserve"><tspan>  </tspan><tspan fill="#9db4f0">  Local citation recommendation   </tspan><tspan fill="#8b9099">which paper to cite for a sentence</tspan></text>
+<text x="26" y="166" xml:space="preserve"><tspan>  </tspan><tspan fill="#9db4f0">  Global citation recommendation  </tspan><tspan fill="#8b9099">what to cite for a whole paper</tspan></text>
+<text x="26" y="187" xml:space="preserve"><tspan>  </tspan><tspan fill="#9db4f0">  Citation context and intent     </tspan><tspan fill="#8b9099">where and why papers cite</tspan></text>
+<text x="26" y="208" xml:space="preserve"><tspan>  </tspan><tspan fill="#9db4f0">  Datasets and evaluation         </tspan><tspan fill="#8b9099">benchmarks and metrics</tspan></text>
+<text x="26" y="229" xml:space="preserve"><tspan>  </tspan><tspan>Shall I sort the PDFs into these folders?</tspan></text>
+<rect x="18" y="249" width="445" height="23" rx="5" fill="#30333a"/>
+<text x="26" y="264" xml:space="preserve"><tspan fill="#8b9099">&gt; </tspan><tspan fill="#f3f4f6" font-weight="600">fold citation context into local; the rest is fine</tspan></text>
+<text x="26" y="299" xml:space="preserve"><tspan fill="#e0915e">● </tspan><tspan>Done. PDFs sorted into three folders, TOPIC.md written.</tspan></text>
+<rect x="18" y="319" width="241" height="23" rx="5" fill="#30333a"/>
+<text x="26" y="334" xml:space="preserve"><tspan fill="#8b9099">&gt; </tspan><tspan fill="#f3f4f6" font-weight="600">what papers am I missing?</tspan></text>
+<text x="26" y="369" xml:space="preserve"><tspan fill="#e0915e">● </tspan><tspan fill="#8b9099">From your library</tspan></text>
+<text x="26" y="390" xml:space="preserve"><tspan>  </tspan><tspan fill="#7cc994">  + </tspan><tspan>Content-Based Citation Recommendation               </tspan><tspan fill="#8b9099">NAACL 2018</tspan></text>
+<text x="26" y="411" xml:space="preserve"><tspan>  </tspan><tspan fill="#7cc994">  + </tspan><tspan>SPECTER: Document-level Representation Learning...  </tspan><tspan fill="#8b9099">ACL 2020</tspan></text>
+<text x="26" y="432" xml:space="preserve"><tspan>  </tspan><tspan fill="#8b9099">From OpenAlex</tspan></text>
+<text x="26" y="453" xml:space="preserve"><tspan>  </tspan><tspan fill="#7cc994">  + </tspan><tspan>Context-aware Citation Recommendation               </tspan><tspan fill="#8b9099">WWW 2010</tspan></text>
+<text x="26" y="474" xml:space="preserve"><tspan>  </tspan><tspan fill="#e27d7d">  − </tspan><tspan fill="#8b9099">two general surveys, broader than this folder</tspan></text>
+<text x="26" y="495" xml:space="preserve"><tspan>  </tspan><tspan>Which ones should I download?</tspan></text>
+<rect x="18" y="515" width="111" height="23" rx="5" fill="#30333a"/>
+<text x="26" y="530" xml:space="preserve"><tspan fill="#8b9099">&gt; </tspan><tspan fill="#f3f4f6" font-weight="600">all three</tspan></text>
+<text x="26" y="565" xml:space="preserve"><tspan fill="#e0915e">● </tspan><tspan>Downloaded the two library papers into their categories and updated</tspan></text>
+<text x="26" y="586" xml:space="preserve"><tspan>  </tspan><tspan>TOPIC.md. The WWW paper is not open access; here is its DOI so you</tspan></text>
+<text x="26" y="607" xml:space="preserve"><tspan>  </tspan><tspan>can get it through your own library.</tspan></text>
+</g>
+</svg>

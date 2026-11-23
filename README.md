@@ -11,12 +11,12 @@ You keep one folder per topic, full of PDFs named `[year VENUE]title.pdf`. Open
 it with Claude Code or Codex, ask the agent to organize it, and it reads the
 whole collection, proposes a taxonomy, sorts the PDFs into category subfolders,
 and writes a `TOPIC.md`. It can then search your library for papers you're
-missing.
+missing, and answer paper questions that involve no folder at all.
 
 > **Status: personal setup, published as a working reference.**
 >
 > One of the two sources is *my* paper library (`archer`) — a SQLite corpus of
-> ~185k papers with its own full-text index, and a PDF store, on a private
+> AI/ML papers with its own full-text index, and a PDF store, on a private
 > host reached over SSH. That library is not part of this repo and is not
 > something you can stand up from it.
 >
@@ -30,15 +30,11 @@ missing.
 > in [`SKILL.md`](SKILL.md), the division of labour between agent and scripts,
 > and the decisions in [Design notes](#design-notes).
 
-This checkout is the canonical copy at `~/.claude/skills/paperlevelup/`.
-Claude Code loads it there, while Codex loads the same directory through the
-symlink `~/.agents/skills/paperlevelup`. Keeping one real copy means edits to
-`SKILL.md`, scripts, tests, and config are immediately shared by both agents.
-
-The `name`/`description` frontmatter at the top of `SKILL.md` controls when the
-skill is considered and loaded. Keep that block intact when editing.
-
 ## How it's put together
+
+<p align="center">
+  <img src="docs/architecture.svg" alt="You talk to the coding agent; the agent runs scripts/, which read and write the topic folder and query archer over SSH and OpenAlex over HTTPS; optionally the agent also calls the paper-retrieval MCP service over the same library" width="860">
+</p>
 
 The agent is the orchestrator, not a fixed pipeline. `scripts/` exposes
 capabilities; `SKILL.md` tells the agent how to use them; every judgement — what
@@ -46,10 +42,10 @@ the categories should be, whether a discovered paper is relevant — happens in
 conversation, where you can redirect it. Nothing is hardcoded as a prompt.
 
 Retrieval and bookkeeping run in `scripts/` through a small source interface.
-The private archer adapter ships short programs over SSH stdin, while the
-OpenAlex adapter calls its public HTTP API directly. Nothing is installed on
-the library host; with the optional Meilisearch backend, its key never leaves
-that machine.
+The private archer adapter ships short programs over SSH stdin and reuses one
+connection per run, while the OpenAlex adapter calls its public HTTP API
+directly. Nothing is installed on the library host; with the optional
+Meilisearch backend, its key never leaves that machine.
 
 ## Setup
 
@@ -57,7 +53,9 @@ that machine.
 pip install pypdf
 ```
 
-For Codex, expose this same checkout through its user-level skills directory:
+This checkout is the canonical copy at `~/.claude/skills/paperlevelup/`, where
+Claude Code loads it. For Codex, expose the same checkout through its
+user-level skills directory instead of copying it:
 
 ```bash
 mkdir -p ~/.agents/skills
@@ -65,89 +63,73 @@ ln -s ~/.claude/skills/paperlevelup ~/.agents/skills/paperlevelup
 ```
 
 Verify the link with `ls -l ~/.agents/skills/paperlevelup`, then restart Codex
-if it was already running. Codex supports symlinked skill directories, so do
-not copy the project into both locations: keep editing the canonical checkout
-under `~/.claude/skills/paperlevelup/`.
+if it was already running. One real copy means edits to `SKILL.md`, scripts,
+tests and config are shared by both agents. The `name`/`description`
+frontmatter at the top of `SKILL.md` controls when the skill is loaded; keep
+that block intact when editing.
 
 You only need SSH access when using the private library source (named
 `archer` in ids and `--sources` for historical reasons; the host is whatever
 `host` says). For an OpenAlex-only setup, set `"sources": ["openalex"]`. The
 values tracked in `config/remote.json` are placeholders that document the shape;
-put the real ones in `config/remote.local.json`:
+put the real ones in `config/remote.local.json` (gitignored):
 
 | Key | Meaning |
 |---|---|
+| `sources` | Which sources to use, in order |
 | `host` | SSH alias of the library host |
 | `db_path` | SQLite paper database on that host (`papers`, `paper_references`) |
 | `pdf_root` | Directory that the database's relative `pdf_path` values resolve against |
 | `search_backend` | `fts5`: keyword search and title matching use the database's own `papers_fts` table (nothing else needed on the host). `meili`: a Meilisearch index, configured below |
 | `meili_url` / `meili_index` / `mustcite_root` | Meilisearch endpoint as seen from the host, and the directory whose `.env` holds `MEILI_KEY` (only for `meili`) |
-| `match_threshold` | Title similarity needed to call it the same paper (0.85) |
+| `match_threshold` | Title similarity needed to call two records the same paper |
+| `openalex.mailto` | Your email, to join OpenAlex's faster "polite pool" |
+| `openalex.timeout` | HTTP timeout in seconds |
+| `openalex.allow_pdf_download` | Whether open-access PDFs may be downloaded from OpenAlex links |
 
-Put machine-specific overrides in `config/remote.local.json` (gitignored) rather
-than editing the tracked file.
-
-The archer adapter opens one SSH connection and reuses it, so an archer run is
-one handshake, not one per paper.
+Tests: `python3 tests/test_regressions.py`.
 
 ## Use it
 
-Open the topic folder with Claude Code or Codex and say:
+Open the topic folder with Claude Code or Codex and talk to it. A typical
+session:
 
-> organize this folder
+<p align="center">
+  <img src="docs/chat-organize.svg" alt="Example session: the agent organizes a folder into categories, then finds missing papers" width="720">
+</p>
 
-It will collect, read everything, propose a taxonomy, wait for you to agree,
-then sort the PDFs and write the report. Later:
+Nothing is moved before you agree to the taxonomy, and nothing is downloaded
+before you pick. Adding more PDFs and asking to organize again is safe —
+already-analysed papers are skipped. If you drag PDFs between category folders
+yourself, the agent reads the new layout back before doing anything else.
 
-> what papers am I missing on this topic?
+When no source can identify a paper, the agent checks the PDF's title page and
+records the correction together with its evidence. Corrections survive later
+re-runs.
 
-Adding more PDFs and repeating the first instruction is safe — already-analysed
-papers are skipped. In Claude Code, `/paperlevelup` invokes the skill explicitly.
-In Codex CLI or the IDE extension, use `/skills` to confirm discovery and invoke
-it with:
+Without a folder, the same retrieval answers paper questions from any
+directory:
 
-```text
-$paperlevelup organize this folder
-```
+<p align="center">
+  <img src="docs/chat-lookup.svg" alt="Example: the agent identifies a half-remembered paper" width="720">
+</p>
 
-Natural-language requests can also trigger it implicitly when they match the
-description in `SKILL.md`.
+Other questions it handles:
 
-## Running the scripts yourself
+| You ask | You get |
+|---|---|
+| "papers on X", "which papers do X?" | A list from the library, each with the passage that answers the question |
+| "work related to this paper", "baselines for Y" | Papers linked to it by content and citations |
+| "new entries for my awesome list" | Candidates the list does not already contain |
+| A topic outside AI/ML venues | OpenAlex results |
 
-The scripts find their own config, so call them by absolute path from anywhere —
-no `cd` required.
+In Claude Code, `/paperlevelup` invokes the skill explicitly. In Codex CLI or
+the IDE extension, use `/skills` to confirm discovery and invoke it with
+`$paperlevelup organize this folder`. Natural-language requests also trigger it
+when they match the description in `SKILL.md`.
 
-```bash
-PLU=~/.claude/skills/paperlevelup/scripts
-TOPIC=~/Downloads/Papers/MyTopic
-
-# resolve every PDF against the library, extract text for the rest
-python3 $PLU/collect.py --topic "$TOPIC"
-
-# print every abstract in one pass (this is what the agent reads)
-python3 $PLU/collect.py --topic "$TOPIC" --digest
-
-# taxonomy and classification; assigning also moves the PDFs
-python3 $PLU/organize.py --topic "$TOPIC" --set-taxonomy '{"categories":[{"name":"X","description":"..."}]}'
-python3 $PLU/organize.py --topic "$TOPIC" --assign '[{"key":"file.pdf","category":"X","summary":"..."}]'
-python3 $PLU/organize.py --topic "$TOPIC" --adopt-folders   # you moved files by hand
-python3 $PLU/organize.py --topic "$TOPIC" --sync            # re-apply the layout
-
-# discovery
-python3 $PLU/search.py --topic "$TOPIC" --keywords "term one,term two" --year-min 2022
-python3 $PLU/search.py --topic "$TOPIC" --keywords "..." --sources openalex
-python3 $PLU/search.py --keywords "..." --sources openalex     # no folder
-python3 $PLU/collect.py --topic "$TOPIC" --known-ids          # ids to exclude in paper-retrieval
-python3 $PLU/graph.py  --topic "$TOPIC" --mode gaps
-python3 $PLU/fetch.py  --topic "$TOPIC" --ids "openalex:W123,archer:<uuid>" --category X
-
-# explicitly retry papers that no source identified
-python3 $PLU/collect.py --topic "$TOPIC" --retry-unresolved
-
-# readable output
-python3 $PLU/report.py --topic "$TOPIC"
-```
+The scripts are meant to be run by the agent; [`SKILL.md`](SKILL.md) documents
+each of them, and every script takes `--help`.
 
 ## What lands in the topic folder
 
@@ -159,49 +141,41 @@ MyTopic/
 └── .paperlevelup/
     ├── papers.jsonl            one record per paper
     ├── taxonomy.json           this topic's categories
+    ├── metadata-overrides.json hand-verified corrections, with evidence
     └── cache/                  raw API responses, per source
 ```
 
-The folder is the source of truth. Drag a PDF into a different category folder
-and `organize.py --adopt-folders` picks the change up. Records are keyed by
-filename, which survives moves between categories.
+The folder is the source of truth. Records are keyed by filename, which
+survives moves between categories.
 
 Identity is a dict — `ids: {archer, openalex, doi}` — because no single id is
 *the* identity once there is more than one backend: archer knows where the PDF
 is, OpenAlex knows the DOI and the global citation count. DOI is the join key
 between them. Each record also carries `provenance`, mapping every field to the
-source it came from.
+source it came from (or to `metadata_override` for a hand-verified correction).
 
 ## Two sources
 
-`config/remote.json` lists which sources to use and in what order; every script
-takes `--sources` to override it for one run.
-
 During collection, configured sources are queried independently so their fields
-can be merged. Later runs only trigger enrichment for newly configured or
-previously untried sources unless `--force` is passed.
+can be merged. Later runs only query newly configured or previously untried
+sources. Responses are cached under `<topic>/.paperlevelup/cache/`, so a re-run
+stays off the network.
 
 |  | **archer** (private) | **OpenAlex** (public) |
 |---|---|---|
-| Coverage | ~185k papers, 15 AI/ML venues | ~250M works, every venue |
-| PDFs | all | open access only (~43% of matches) |
-| Abstracts | ~96% | ~76% |
-| Citation edges | 3.8M, between corpus papers only | global, but present for ~48% of works |
-| DOI, global citation count | — | yes |
+| Coverage | A fixed set of major AI/ML venues | Every venue |
+| PDFs | All of them | Open access only |
+| Abstracts | Nearly all | Most |
+| Citation edges | Dense, but only between corpus papers | Global, but missing for many works |
+| DOI, global citation count | — | Yes |
 
 The blind spots are different in kind, which is the whole reason for having
 both. archer misses whole **venues** — SIGIR, KDD, TKDE, ECIR, Scientometrics
 and most journals are absent, so searching it for "local citation
 recommendation" returns almost nothing. OpenAlex misses **reference lists**:
 coverage depends on publisher and Crossref deposits, so a preprint-heavy folder
-can have a much thinner citation graph.
-
-On a real 49-paper folder, archer alone identified 24; adding OpenAlex took it
-to 49.
-
-Set `openalex.mailto` in `config/remote.local.json` to join OpenAlex's polite
-pool (10 req/s, 100k/day). Responses are cached under
-`<topic>/.paperlevelup/cache/`, so a re-run costs nothing.
+can have a much thinner citation graph. On real folders, archer alone leaves a
+large share of papers unidentified; adding OpenAlex closes most of that gap.
 
 ## Channels for discovery
 
@@ -211,15 +185,15 @@ same library, combining full-text BM25, embeddings, citation-graph expansion and
 a reranker, and returning an evidence passage per result — `SKILL.md` makes it
 the main search channel for the library. It returns archer's paper ids, so
 its results can be fetched like any other. Without it, the skill falls back to
-archer keyword search. On one curated list, with the same 23 queries over the
-same library, it recalled 30 of 38 known papers against 24 for keyword search;
-keyword search still added 5 the service missed, so `SKILL.md` keeps one
-keyword pass as a cross-check. The service itself is not part of this repo.
+archer keyword search. On a curated list, the service recalled clearly more of
+the known papers than keyword search with the same queries, but keyword search
+still found some the service missed, so `SKILL.md` keeps one keyword pass as a
+cross-check. The service itself is not part of this repo.
 
 **Keyword** (`search.py`) searches every configured source. It works for every
 paper in your folder, because the keywords come from reading the papers, not
-from the papers being indexed. For OpenAlex it is the only search channel;
-`--topic` may be omitted for a search that is not tied to a folder.
+from the papers being indexed. For OpenAlex it is the only search channel, and
+it can run without a topic folder.
 
 **Citation** (`graph.py`) walks the citation graph. Its `gaps` mode ranks by
 lift rather than raw citation count: raw count just returns the field's famous
@@ -232,7 +206,7 @@ archer can only count citations inside its own corpus, OpenAlex knows the global
 count — which is what lift was always reaching for. Merging them would produce
 numbers that look comparable and are not.
 
-Both channels over-recall on purpose and return abstracts. Nothing scores
+All channels over-recall on purpose and return abstracts. Nothing scores
 relevance for you — the agent reads them and you correct it.
 
 ## Design notes
@@ -240,11 +214,11 @@ relevance for you — the agent reads them and you correct it.
 Two earlier ideas were tried and dropped:
 
 - **A per-paper pipeline with fixed prompts and a fixed schema.** That
-  architecture solves a scale problem these topics don't have (the largest is
-  112 papers, which fits in one context). Worse, classifying one paper at a time
-  means never seeing the collection's shape, so the hand-written taxonomy
-  becomes a ceiling on quality. Reading everything at once and deriving the
-  taxonomy from the actual distribution is strictly better at this scale.
+  architecture solves a scale problem these topics don't have (even the largest
+  topic fits in one context). Worse, classifying one paper at a time means never
+  seeing the collection's shape, so the hand-written taxonomy becomes a ceiling
+  on quality. Reading everything at once and deriving the taxonomy from the
+  actual distribution is strictly better at this scale.
 
 - **Quantifying relevance for discovery.** Finding related work is subjective:
   you pull out keywords, search, skim abstracts, and decide. Encoding that as a
@@ -260,13 +234,13 @@ A third decision came with the second source:
   merges field by field against a fixed precedence table and each record records
   where every field came from. The same reasoning is why `graph.py` reports one
   block per source instead of one merged ranking — deduplicating by DOI is
-  bookkeeping, but deciding whose rank-3 beats whose rank-1 is judgement, and
+  bookkeeping, but deciding whose top result beats whose is judgement, and
   judgement does not go in the scripts.
 
 ### Choosing a source, if you are adapting this
 
 Semantic Scholar was the obvious third candidate — it parses references out of
 PDFs, so it has the arXiv reference lists OpenAlex lacks, plus TLDRs and
-citation intents. It was dropped for now: the unauthenticated pool returns HTTP
-429 on essentially every request (five calls at 3.5s spacing, all rejected), so
-it is not usable without an API key. Worth adding behind a key if you have one.
+citation intents. It was dropped for now: the unauthenticated pool rejects
+essentially every request with HTTP 429, so it is not usable without an API
+key. Worth adding behind a key if you have one.
