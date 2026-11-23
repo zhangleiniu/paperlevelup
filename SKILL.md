@@ -1,7 +1,7 @@
 ---
 name: paperlevelup
 description: Organize a folder of research paper PDFs into categories, and find
-  papers via the user's own ~185k-paper AI/ML library (searched through the
+  papers via the user's own AI/ML paper library (searched through the
   paper-retrieval MCP tools when they are connected, otherwise directly on the
   library host over SSH) plus OpenAlex for every other venue. Use when the user wants to
   organize, classify, sort, triage, or summarize a topic folder of papers; when
@@ -85,10 +85,10 @@ different things, and every script takes `--sources` to pick between them
 |  | **archer** | **OpenAlex** |
 |---|---|---|
 | Reached by | SSH, nothing installed there | public HTTP API, no key |
-| Coverage | ~185k papers, **15 AI/ML venues only**, 1979–2026 | ~250M works, every venue |
-| PDFs | **all of them** | open-access only (~43% of matches) |
-| Abstracts | ~96% | ~76% |
-| Citation edges | 3.8M, but only *between corpus papers* | global, but **~48% of works** |
+| Coverage | **a fixed set of major AI/ML venues only** | every venue |
+| PDFs | **all of them** | open access only — often none |
+| Abstracts | nearly all | most, not all |
+| Citation edges | dense, but only *between corpus papers* | global, but **missing for many works** |
 | DOI / global citation count | no | yes |
 
 Two consequences you must keep straight:
@@ -101,9 +101,6 @@ Two consequences you must keep straight:
   publisher and Crossref deposits, so a preprint-heavy folder can have a much
   thinner graph. The gap is *systematic*, not random. `graph.py` prints the
   exact ratio; quote it rather than presenting a thin graph as a complete one.
-
-Measured on a real 49-paper folder: archer alone identified 24, adding OpenAlex
-took it to 49.
 
 ---
 
@@ -168,8 +165,8 @@ use `--remove <PDF_BASENAME>` to withdraw a correction.
 python3 ~/.claude/skills/paperlevelup/scripts/collect.py --topic "<dir>" --digest
 ```
 
-**Read all of it before deciding anything.** Topics here run 8–112 papers, which
-fits comfortably in your context. This is the point of the whole design: you get
+**Read all of it before deciding anything.** Even the largest topic fits
+comfortably in your context. This is the point of the whole design: you get
 to see the actual distribution of the collection before naming a single
 category.
 
@@ -265,8 +262,7 @@ find_papers(query="<one concrete query>", original_query="<the same query>",
 - **Several concrete queries, not one abstract one.** For a folder or a curated
   list, each query is its own question: pass it as both `query` and
   `original_query`, k 40–100. A paragraph describing the topic as the query
-  recalls less than a handful of specific phrases (measured on one list: 25 vs
-  30 of 38 known papers).
+  recalls clearly less than a handful of specific phrases.
 - **`find_related_papers` for a few seeds only** — the folder's central papers,
   or the one paper the user asked about (`paper_id`, `url`, or `text` = title +
   abstract for a paper outside the library). Run on every paper in a folder, its
@@ -276,7 +272,7 @@ find_papers(query="<one concrete query>", original_query="<the same query>",
   result's `url`, never its internal id. A result found only by the `graph`
   channel (see `ranks`) is a citation neighbour of the top hits, often a
   well-known paper the user has.
-- The first call after a quiet period can take ~20 s while the service reloads.
+- The first call after a quiet period can be slow while the service reloads.
   If the tools are missing or return an error, say so and use the archer keyword
   search below instead.
 
@@ -293,13 +289,13 @@ python3 ~/.claude/skills/paperlevelup/scripts/search.py --topic "<dir>" \
 ```
 
 OpenAlex is the only channel for SIGIR, KDD, WWW, CIKM, journals and arXiv;
-run it whenever the topic reaches past the 15 library venues. Run several rounds
+run it whenever the topic reaches past the library's venues. Run several rounds
 with different phrasings; each returns abstracts, so read them and refine.
 
 archer keyword search is still worth one pass with the same keywords even when
 the paper-retrieval tools work: it is cheap, and a paper whose title contains
-the query verbatim can rank below k after reranking (on one list it added 5 of
-38 known papers the tools missed). It is not a substitute: it requires every
+the query verbatim can rank below k after reranking, so it still finds known
+papers the tools miss. It is not a substitute: it requires every
 term of a query to appear, so papers worded differently from the query never
 surface, and its matches are often coincidental. If a strict query comes back
 empty, shorten the phrase rather than reaching for `--match-any`. OpenAlex
