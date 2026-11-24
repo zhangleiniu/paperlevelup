@@ -131,12 +131,27 @@ contain typos (`[2925 NAACL]`, `[2025 ENMLP]`) that the sources silently
 correct — trust the source. This corrects the *metadata*, not the file on disk;
 the filename keeps its typo unless the user asks otherwise.
 
-When nothing matches, read `near_miss` before concluding the paper is absent.
-Truncated filenames are the usual cause: `Experiments with Relevance and
-Rhetorical Status` is really `Summarizing Scientific Articles: Experiments with
-Relevance and Rhetorical Status`, which scores only 0.75 on similarity. The
-matcher accepts verbatim containment of 30+ characters for exactly this case,
-but a shorter truncation still needs your eye.
+Publisher download names are identifiers, not titles, and collect handles them
+without your help. An ACL Anthology id (`2026.emnlp-main.589.pdf`), a Nature id
+(`s41586-025-10072-4.pdf`), an arXiv id, or a DOI in the filename is looked up
+directly. Any filename that is not a title is replaced as the query by a title
+guessed from page 1, and a candidate is accepted when its full title is printed
+on that page. Each record's `title_hint_from` (`filename`, `pdf_text`, `record`,
+`override`) says what was searched, and `match_kind` says how the match was
+made.
+
+Whatever is still unidentified is listed under `unresolved` in the summary, with
+`searched_as` and each source's closest title. **A `near_miss` is not evidence
+that the paper is absent.** Below the threshold it is usually an unrelated paper.
+Check `searched_as` against the PDF's first page first. Truncated filenames are
+the usual cause: `Experiments with Relevance and Rhetorical Status` is really
+`Summarizing Scientific Articles: Experiments with Relevance and Rhetorical
+Status`, which scores only 0.75 on similarity. The matcher accepts verbatim
+containment of 30+ characters for exactly this case, but a shorter truncation
+still needs your eye. If `searched_as` is wrong, set the real title with
+`metadata.py --set` and rerun with `--retry-unresolved`. Before you tell the user
+a paper is not in the library, run `exact_search` on its real title (when the
+paper-retrieval tools are connected).
 
 #### Correct metadata only after retrieval fails
 
@@ -157,7 +172,15 @@ year, DOI, and URL. Every record requires an evidence note. The script writes
 `.paperlevelup/metadata-overrides.json`, applies the fields to `papers.jsonl`,
 and marks per-field provenance as `metadata_override`. `collect.py` reapplies
 the ledger after every future source refresh. Never edit either file directly;
-use `--remove <PDF_BASENAME>` to withdraw a correction.
+use `--remove <PDF_BASENAME>` to withdraw a correction. A withdrawn field is
+restored to the value and source it displaced, reported under `withdrawn`. A
+field listed as `stale` predates that record, so run `collect.py --force` to
+refresh it.
+
+An override is for a field the sources lack or get wrong. It is not a substitute
+for a failed match. If the paper is unresolved, fix the title it is searched by
+and retry, so the sources supply the metadata. When you do write a field, write
+it in full from the PDF: every author, not the first few.
 
 ### Step 2: read the entire topic at once
 

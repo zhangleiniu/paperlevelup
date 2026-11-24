@@ -62,6 +62,23 @@ def title_match(query: str, candidate: str) -> tuple[float, bool]:
     return ratio, contained
 
 
+#: Shorter candidate titles than this could appear on page 1 by coincidence.
+HEAD_TITLE_MIN_CHARS = 20
+
+
+def title_in_head(title: str, head: str | None) -> bool:
+    """Whether a candidate's full title appears verbatim in the PDF's page-1 text.
+
+    The real title is always printed on the first page, so this is strong
+    evidence even when the query that surfaced the candidate was only a rough
+    guess at the title (as it is when the filename is an identifier).
+    """
+    if not head:
+        return False
+    t, h = normalise_title(title), normalise_title(head)
+    return len(t) >= HEAD_TITLE_MIN_CHARS and t in h
+
+
 # --------------------------------------------------------------------------
 # record merging
 # --------------------------------------------------------------------------

@@ -8,7 +8,7 @@ from common import Sidecar, add_topic_arg, print_json
 from metadata_overrides import (apply_overrides, load_overrides,
                                 normalize_entries, overrides_path,
                                 remove_entries, save_overrides, set_entries,
-                                validate_ledger)
+                                validate_ledger, withdraw_overrides)
 
 
 def main():
@@ -45,8 +45,9 @@ def main():
         save_overrides(sidecar, data)
 
     validate_ledger(data, set(sidecar.entries))
-    applied = []
+    applied, withdrawn = [], []
     if mutating_ledger or args.apply:
+        withdrawn = withdraw_overrides(sidecar, data)
         applied = apply_overrides(sidecar, data)
         sidecar.save()
 
@@ -57,6 +58,12 @@ def main():
         "changed": changed,
         "removed": removed,
         "applied": applied,
+        "withdrawn": withdrawn,
+        **({"stale_note": "fields listed under `stale` predate the record of "
+                          "displaced values and still hold the withdrawn "
+                          "override; run collect.py --topic <dir> --force to "
+                          "refresh them from the sources"}
+           if any(w.get("stale") for w in withdrawn) else {}),
         "check": "ok",
     })
 

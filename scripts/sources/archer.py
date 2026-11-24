@@ -18,6 +18,16 @@ items = PAYLOAD["items"]
 threshold = PAYLOAD["threshold"]
 results = []
 for item in items:
+    # An identifier-shaped filename gives the paper's URL: exact, no guessing.
+    urls = [u for u in item.get("urls") or [] if u]
+    if urls:
+        row = db().execute(
+            "select id from papers where url in (%s) limit 1"
+            % ",".join("?" * len(urls)), urls).fetchone()
+        if row:
+            results.append({"key": item["key"], "matched": True, "score": 1.0,
+                            "match_kind": "url", "id": row["id"]})
+            continue
     query = item.get("title") or ""
     try:
         hits = meili_search(query, limit=8)
@@ -25,13 +35,25 @@ for item in items:
         results.append({"key": item["key"], "matched": False, "error": str(exc)})
         continue
     best, best_score = None, 0.0
+    head = norm(item.get("head") or "")
+    on_page = None
     for hit in hits:
         score = ratio(query, hit.get("title", ""))
         if score > best_score:
             best, best_score = hit, score
+        # The query may be a rough guess from page-1 text; a hit whose whole
+        # title is printed on that page is the paper.
+        title_norm = norm(hit.get("title", ""))
+        if (on_page is None and head and len(title_norm) >= 20
+                and title_norm in head):
+            on_page = (hit, score)
     if best and best_score >= threshold:
         results.append({"key": item["key"], "matched": True,
                         "score": round(best_score, 4), "id": best["id"]})
+    elif on_page:
+        results.append({"key": item["key"], "matched": True,
+                        "score": round(on_page[1], 4), "match_kind": "page_title",
+                        "id": on_page[0]["id"]})
     else:
         results.append({"key": item["key"], "matched": False,
                         "score": round(best_score, 4),
@@ -121,10 +143,17 @@ class ArcherSource(Source):
     def resolve(self, items, threshold):
         if not items:
             return {}
+        payload_items = []
+        for item in items:
+            url = item.get("url")
+            payload_items.append({
+                "key": item["key"], "title": item.get("title"),
+                "head": item.get("head"),
+                # library URLs are stored with and without the trailing slash
+                "urls": [url, url.rstrip("/")] if url else [],
+            })
         response = self._run(REMOTE_RESOLVE,
-                             {"items": [{"key": i["key"], "title": i.get("title")}
-                                        for i in items],
-                              "threshold": threshold})
+                             {"items": payload_items, "threshold": threshold})
         meta = response.get("meta") or {}
         out = {}
         for result in response.get("results", []):
@@ -132,6 +161,7 @@ class ArcherSource(Source):
             if result.get("matched"):
                 record = self._record(meta.get(result["id"], {"id": result["id"]}))
                 out[key] = {"matched": True, "score": result.get("score"),
+                            "match_kind": result.get("match_kind", "similarity"),
                             "id": result["id"], "uid": record["uid"],
                             "record": record}
             else:

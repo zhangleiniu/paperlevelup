@@ -218,6 +218,66 @@ class MetadataOverrideTests(unittest.TestCase):
             self.assertEqual(applied, [{
                 "key": "paper.pdf", "fields": ["authors", "venue"]}])
 
+    def test_removing_an_override_restores_the_source_value(self):
+        """2026-11 session: --remove left the truncated author list in
+        papers.jsonl, still labelled metadata_override."""
+        from metadata_overrides import remove_entries, withdraw_overrides
+        with tempfile.TemporaryDirectory() as raw:
+            sidecar = Sidecar(Path(raw))
+            sidecar.entries["paper.pdf"] = {
+                "key": "paper.pdf", "ids": {"openalex": "W1"},
+                "authors": ["A", "B", "C"], "venue": "Nature",
+                "provenance": {"authors": "openalex", "venue": "openalex"},
+            }
+            data = {"version": 1, "records": {}}
+            set_entries(sidecar, data, [{"key": "paper.pdf", "authors": ["A"],
+                                         "venue": "Wrong", "evidence": "memory"}])
+            apply_overrides(sidecar, data)
+            # applying twice must not record the override as its own source
+            apply_overrides(sidecar, data)
+            self.assertEqual(sidecar.entries["paper.pdf"]["authors"], ["A"])
+
+            # dropping one field keeps the other overridden
+            set_entries(sidecar, data, [{"key": "paper.pdf", "venue": "Wrong",
+                                         "evidence": "memory"}])
+            apply_overrides(sidecar, data)
+            rec = sidecar.entries["paper.pdf"]
+            self.assertEqual(rec["authors"], ["A", "B", "C"])
+            self.assertEqual(rec["provenance"]["authors"], "openalex")
+            self.assertEqual(rec["provenance"]["venue"], "metadata_override")
+
+            remove_entries(data, ["paper.pdf"])
+            withdrawn = withdraw_overrides(sidecar, data)
+            rec = sidecar.entries["paper.pdf"]
+            self.assertEqual(withdrawn, [{"key": "paper.pdf", "restored": ["venue"]}])
+            self.assertEqual(rec["venue"], "Nature")
+            self.assertEqual(rec["provenance"]["venue"], "openalex")
+            self.assertNotIn("metadata_override", rec)
+
+    def test_withdrawing_a_legacy_override_marks_it_stale(self):
+        from metadata_overrides import withdraw_overrides
+        with tempfile.TemporaryDirectory() as raw:
+            sidecar = Sidecar(Path(raw))
+            sidecar.entries["paper.pdf"] = {
+                "key": "paper.pdf", "authors": ["A"],
+                "provenance": {"authors": "metadata_override"},
+                "metadata_override": {"fields": ["authors"], "evidence": "x"},
+            }
+            withdrawn = withdraw_overrides(sidecar, {"version": 1, "records": {}})
+            rec = sidecar.entries["paper.pdf"]
+        self.assertEqual(withdrawn, [{"key": "paper.pdf", "restored": [],
+                                      "stale": ["authors"]}])
+        self.assertEqual(rec["provenance"]["authors"], "withdrawn_override")
+
+    def test_source_refresh_does_not_feed_overrides_back_into_the_merge(self):
+        records = collect.records_from_sidecar({
+            "ids": {"openalex": "W1"}, "authors": ["A"], "url": "u",
+            "provenance": {"authors": "metadata_override", "url": "openalex"},
+        })
+        [record] = records
+        self.assertNotIn("authors", record)
+        self.assertEqual(record["url"], "u")
+
     def test_override_ledger_round_trips(self):
         with tempfile.TemporaryDirectory() as raw:
             sidecar = Sidecar(Path(raw))
@@ -240,6 +300,122 @@ class MetadataOverrideTests(unittest.TestCase):
                     "authors": ["A. Author"],
                     "evidence": "PDF first page",
                 }])
+
+
+SCIRAG_PAGE_1 = """Proceedings of the 19th Conference of the European Chapter of the Association for Computational Linguistics
+V olume 1: Long Papers, pages 6440-6460
+March 24-29, 2026 \u00a92026 Association for Computational Linguistics
+SciRAG: Adaptive, Citation-Aware, and Outline-Guided Retrieval and
+Synthesis for Scientific Literature
+Hang Ding S Yilun ZhaoY Tiansheng Hu N Zihang WangN
+Abstract
+"""
+
+
+class IdentifierFilenameTests(unittest.TestCase):
+    """Publisher download names are identifiers, not titles (2026-11 session:
+    three such PDFs all fell through to local-only, and the agent reported a
+    paper that was in the library as absent)."""
+
+    def test_identifier_filenames_yield_lookups(self):
+        from common import filename_ids, looks_like_title
+        self.assertEqual(filename_ids("2026.emnlp-main.589.pdf"), {
+            "kind": "acl", "doi": "10.18653/v1/2026.emnlp-main.589",
+            "url": "https://aclanthology.org/2026.emnlp-main.589/"})
+        self.assertEqual(filename_ids("s41586-025-10072-4.pdf")["doi"],
+                         "10.1038/s41586-025-10072-4")
+        self.assertEqual(filename_ids("2401.12345v2.pdf")["arxiv"], "2401.12345")
+        self.assertEqual(filename_ids("10.1145_3539618.3591717.pdf")["doi"],
+                         "10.1145/3539618.3591717")
+        self.assertEqual(filename_ids("Attention Is All You Need.pdf"), {})
+        self.assertFalse(looks_like_title("2026.emnlp-main.589"))
+        self.assertFalse(looks_like_title("s41586-025-10072-4"))
+        self.assertTrue(looks_like_title("Attention Is All You Need"))
+
+    def test_title_guess_skips_running_head_and_joins_wrapped_line(self):
+        from common import guess_title_from_text
+        self.assertEqual(
+            guess_title_from_text(SCIRAG_PAGE_1),
+            "SciRAG: Adaptive, Citation-Aware, and Outline-Guided Retrieval and "
+            "Synthesis for Scientific Literature")
+
+    def test_title_printed_on_page_one_is_accepted_from_a_rough_query(self):
+        from sources.base import title_in_head
+        title = ("SciRAG: Adaptive, Citation-Aware, and Outline-Guided "
+                 "Retrieval and Synthesis for Scientific Literature")
+        self.assertTrue(title_in_head(title, SCIRAG_PAGE_1))
+        self.assertFalse(title_in_head("ACL2026 Industry Track: Overview",
+                                       SCIRAG_PAGE_1))
+        self.assertFalse(title_in_head("Abstract", SCIRAG_PAGE_1))
+
+    def test_openalex_tries_the_filename_doi_before_title_search(self):
+        source = OpenAlexSource(config={"openalex": {}}, cache_dir=None)
+        paths = []
+
+        def fake_get(path, _params, use_cache=True):
+            paths.append(path)
+            return {"id": "https://openalex.org/W7", "title": "Real Title",
+                    "doi": "https://doi.org/10.1038/s41586-025-10072-4"}
+
+        with mock.patch.object(source, "_get", side_effect=fake_get):
+            out = source.resolve([{"key": "s41586-025-10072-4.pdf",
+                                   "title": "s41586-025-10072-4",
+                                   "doi": "10.1038/s41586-025-10072-4"}], 0.85)
+        self.assertEqual(paths, ["works/doi:10.1038/s41586-025-10072-4"])
+        self.assertTrue(out["s41586-025-10072-4.pdf"]["matched"])
+        self.assertEqual(out["s41586-025-10072-4.pdf"]["match_kind"], "doi")
+
+    def test_openalex_accepts_candidate_whose_title_is_on_page_one(self):
+        source = OpenAlexSource(config={"openalex": {}}, cache_dir=None)
+        real = ("SciRAG: Adaptive, Citation-Aware, and Outline-Guided "
+                "Retrieval and Synthesis for Scientific Literature")
+        with mock.patch.object(source, "_get", return_value={"results": [
+                {"id": "https://openalex.org/W1", "title": "Something else"},
+                {"id": "https://openalex.org/W2", "title": real}]}):
+            out = source.resolve([{"key": "x.pdf", "title": "SciRAG Adaptive",
+                                   "head": SCIRAG_PAGE_1}], 0.85)
+        self.assertTrue(out["x.pdf"]["matched"])
+        self.assertEqual(out["x.pdf"]["match_kind"], "page_title")
+        self.assertEqual(out["x.pdf"]["id"], "W2")
+
+    def test_collect_searches_by_page_title_and_reports_unresolved(self):
+        calls = {}
+
+        class Unmatched:
+            capabilities = frozenset({"resolve"})
+
+            def __init__(self, name):
+                self.name = name
+
+            def resolve(self, items, threshold):
+                calls[self.name] = [dict(i) for i in items]
+                return {i["key"]: {"matched": False, "score": 0.31,
+                                   "near_miss": "ACL2026 Industry Track: Overview"}
+                        for i in items}
+
+        with tempfile.TemporaryDirectory() as raw:
+            (Path(raw) / "2026.eacl-long.303.pdf").write_bytes(b"%PDF-1.4")
+            with mock.patch.object(collect, "get_source",
+                                   side_effect=lambda name, **_k: Unmatched(name)), \
+                    mock.patch.object(collect, "pdf_text",
+                                      return_value=(SCIRAG_PAGE_1, None)):
+                result = run_main(collect, ["--topic", raw,
+                                            "--sources", "archer,openalex"])
+            rec = Sidecar(Path(raw)).entries["2026.eacl-long.303.pdf"]
+
+        sent = calls["archer"][0]
+        self.assertTrue(sent["title"].startswith("SciRAG: Adaptive"))
+        self.assertEqual(sent["doi"], "10.18653/v1/2026.eacl-long.303")
+        self.assertEqual(sent["url"], "https://aclanthology.org/2026.eacl-long.303/")
+        self.assertIn("Zihang", sent["head"])
+        [unresolved] = result["unresolved"]
+        self.assertEqual(unresolved["searched_as_from"], "pdf_text")
+        self.assertEqual(
+            unresolved["closest_by_source"]["archer"]["near_miss"],
+            "ACL2026 Industry Track: Overview")
+        self.assertIn("exact_search", result["unresolved_warning"])
+        self.assertTrue(rec["title"].startswith("SciRAG: Adaptive"))
+        self.assertEqual(rec["provenance"], {"title": "pdf_text_guess"})
 
 
 class OpenAlexPdfTests(unittest.TestCase):

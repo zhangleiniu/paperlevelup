@@ -71,12 +71,67 @@ def remove_entries(data: dict, keys: list[str]) -> list[str]:
     return sorted(removed)
 
 
+#: provenance for a field whose override was withdrawn but whose earlier value
+#: was never recorded (ledgers applied before `displaced` existed)
+WITHDRAWN = "withdrawn_override"
+
+
+def withdraw_overrides(sidecar, data: dict) -> list[dict]:
+    """Undo override fields that are no longer in the ledger.
+
+    Without this, `--remove` (or a `--set` that drops a field) only edits the
+    ledger: papers.jsonl keeps the withdrawn value, still labelled
+    `metadata_override`, until a full re-resolve. Each applied override keeps
+    the value it displaced, so withdrawing restores that value and its source.
+    """
+    records = data.get("records", {})
+    withdrawn = []
+    for key in sorted(sidecar.entries):
+        rec = sidecar.entries[key]
+        marker = rec.get("metadata_override")
+        if not marker:
+            continue
+        entry = records.get(key) or {}
+        displaced = marker.get("displaced") or {}
+        provenance = rec.setdefault("provenance", {})
+        restored, stale = [], []
+        for field in marker.get("fields", []):
+            if field in entry or provenance.get(field) != "metadata_override":
+                continue
+            if field in displaced:
+                rec[field] = displaced[field].get("value")
+                if displaced[field].get("provenance"):
+                    provenance[field] = displaced[field]["provenance"]
+                else:
+                    provenance.pop(field, None)
+                restored.append(field)
+            else:
+                provenance[field] = WITHDRAWN
+                stale.append(field)
+        if key not in records:
+            del rec["metadata_override"]
+        if restored or stale:
+            withdrawn.append({"key": key, "restored": restored,
+                              **({"stale": stale} if stale else {})})
+    return withdrawn
+
+
 def apply_overrides(sidecar, data: dict | None = None) -> list[dict]:
     data = data if data is not None else load_overrides(sidecar)
     validate_ledger(data, set(sidecar.entries))
+    withdraw_overrides(sidecar, data)
     applied = []
     for key, entry in sorted(data.get("records", {}).items()):
         fields = {name: entry[name] for name in ALLOWED_FIELDS if name in entry}
+        rec = sidecar.entries[key]
+        provenance = rec.get("provenance") or {}
+        displaced = dict((rec.get("metadata_override") or {}).get("displaced") or {})
+        for field in fields:
+            # Only a value some source (or nothing) put there is worth keeping;
+            # one still marked as the override is the override itself.
+            if provenance.get(field) not in ("metadata_override", WITHDRAWN):
+                displaced[field] = {"value": rec.get(field),
+                                    "provenance": provenance.get(field)}
         rec = sidecar.upsert(key, **fields)
         provenance = rec.setdefault("provenance", {})
         for field in fields:
@@ -85,6 +140,7 @@ def apply_overrides(sidecar, data: dict | None = None) -> list[dict]:
             "fields": sorted(fields),
             "evidence": entry["evidence"],
             **({"note": entry["note"]} if entry.get("note") else {}),
+            "displaced": {f: v for f, v in displaced.items() if f in fields},
         }
         applied.append({"key": key, "fields": sorted(fields)})
     return applied

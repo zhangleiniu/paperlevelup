@@ -33,7 +33,8 @@ import urllib.request
 from pathlib import Path
 
 from . import register
-from .base import Source, SourceError, make_uid, split_uid, title_match
+from .base import (Source, SourceError, make_uid, split_uid, title_in_head,
+                   title_match)
 
 API = "https://api.openalex.org"
 
@@ -191,9 +192,26 @@ class OpenAlexSource(Source):
 
     # -- capabilities -------------------------------------------------------
 
+    def _resolve_doi(self, doi: str) -> dict | None:
+        try:
+            work = self._get("works/doi:%s" % doi, {"select": WORK_FIELDS})
+        except SourceError:
+            return None
+        return work if work and work.get("id") else None
+
     def resolve(self, items: list[dict], threshold: float) -> dict[str, dict]:
         out: dict[str, dict] = {}
         for item in items:
+            # A DOI read off a publisher filename is an exact lookup; try it
+            # before any fuzzy title matching.
+            if item.get("doi"):
+                work = self._resolve_doi(item["doi"])
+                if work:
+                    record = self._record(work)
+                    out[item["key"]] = {
+                        "matched": True, "score": 1.0, "match_kind": "doi",
+                        "id": record["id"], "uid": record["uid"], "record": record}
+                    continue
             title = (item.get("title") or "").strip()
             if not title:
                 out[item["key"]] = {"matched": False, "score": 0.0,
@@ -212,9 +230,12 @@ class OpenAlexSource(Source):
                 continue
 
             best, best_score, best_contained = None, 0.0, False
+            on_page = None
             for work in data.get("results", []):
                 cand_title = work.get("title") or work.get("display_name") or ""
                 score, contained = title_match(title, cand_title)
+                if on_page is None and title_in_head(cand_title, item.get("head")):
+                    on_page = (work, score)
                 # A year hint that contradicts by more than a year is usually a
                 # different paper with a near-identical title (v1 vs v2, or a
                 # workshop/journal pair). Nudge rather than exclude.
@@ -226,11 +247,16 @@ class OpenAlexSource(Source):
                     best, best_score, best_contained = work, score, contained
 
             accepted = best is not None and (best_score >= threshold or best_contained)
+            kind = "similarity" if best_score >= threshold else "containment"
+            if not accepted and on_page:
+                # The query was a guess, but this candidate's whole title is
+                # printed on the PDF's first page.
+                (best, best_score), accepted, kind = on_page, True, "page_title"
             if accepted:
                 record = self._record(best)
                 out[item["key"]] = {
                     "matched": True, "score": round(best_score, 4),
-                    "match_kind": "similarity" if best_score >= threshold else "containment",
+                    "match_kind": kind,
                     "id": record["id"], "uid": record["uid"], "record": record}
             else:
                 out[item["key"]] = {

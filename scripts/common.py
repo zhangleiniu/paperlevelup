@@ -251,6 +251,79 @@ def parse_filename(name: str) -> dict:
     return {"year": None, "venue": head or None, "title": title}
 
 
+# Publisher download names are identifiers, not titles. Matching them as titles
+# fails every time, and the nearest title the sources offer is noise
+# (`2026.emnlp-main.589` once came back as "ACL2026 Industry Track: Overview").
+ACL_ID_RE = re.compile(r"^(\d{4}\.[a-z]+(?:-[a-z]+)*\.\d+|[A-Z]\d{2}-\d{4})$")
+NATURE_ID_RE = re.compile(r"^s\d{5}-\d{3}-\d{5}-[\dx]$", re.I)
+ARXIV_ID_RE = re.compile(r"^(\d{4}\.\d{4,5})(v\d+)?$")
+DOI_STEM_RE = re.compile(r"^(10\.\d{4,9})[_/](.+)$")
+
+
+def filename_ids(name: str) -> dict:
+    """Identifiers a publisher download name carries, if any.
+
+    `2026.emnlp-main.589.pdf` -> ACL Anthology DOI and URL;
+    `s41586-025-10072-4.pdf` -> Nature DOI; `2401.12345v2.pdf` -> arXiv;
+    `10.1145_3539618.3591717.pdf` -> that DOI. Returns {} for anything else.
+    """
+    stem = name[:-4] if name.lower().endswith(".pdf") else name
+    stem = stem.strip()
+    if ACL_ID_RE.match(stem):
+        return {"kind": "acl", "doi": "10.18653/v1/%s" % stem,
+                "url": "https://aclanthology.org/%s/" % stem}
+    if NATURE_ID_RE.match(stem):
+        return {"kind": "nature", "doi": "10.1038/%s" % stem.lower()}
+    match = ARXIV_ID_RE.match(stem)
+    if match:
+        return {"kind": "arxiv", "arxiv": match.group(1),
+                "doi": "10.48550/arXiv.%s" % match.group(1)}
+    match = DOI_STEM_RE.match(stem)
+    if match:
+        return {"kind": "doi", "doi": "%s/%s" % (match.group(1), match.group(2))}
+    return {}
+
+
+def looks_like_title(text: str) -> bool:
+    """False for identifier-shaped names: fewer than three real words."""
+    if filename_ids(text or ""):
+        return False
+    words = re.findall(r"[^\W\d_]{2,}", text or "")
+    return len(words) >= 3
+
+
+# Page-1 lines that are running heads, not the title.
+HEADER_LINE_RE = re.compile(
+    r"proceedings|v ?olume|\bvol\b|\bpages?\s+\d|©|\(c\)|copyright|association for"
+    r"|journal|issn|\bdoi\b|https?://|arxiv|preprint|published|workshop"
+    r"|under review|accepted|\|", re.I)
+TITLE_CONTINUES_RE = re.compile(
+    r"\b(and|with|for|of|the|in|on|to|via|a|an|from|by|towards?|using|:)\s*$", re.I)
+
+
+def guess_title_from_text(text: str) -> str | None:
+    """Best-effort title from page-1 text, used only as a *search query*.
+
+    It does not have to be exact: a candidate it surfaces is accepted when the
+    candidate's real title appears verbatim on the page
+    (`sources.base.title_in_head`), so this guess only has to put the right
+    paper among the hits.
+    """
+    lines = [" ".join(l.split()) for l in (text or "").splitlines()]
+    lines = [l for l in lines if l]
+    for i, line in enumerate(lines[:25]):
+        if HEADER_LINE_RE.search(line) or len(line) < 12:
+            continue
+        if len(re.findall(r"[^\W\d_]{2,}", line)) < 3:
+            continue
+        title = line
+        nxt = lines[i + 1] if i + 1 < len(lines) else ""
+        if nxt and (TITLE_CONTINUES_RE.search(title) or nxt[:1].islower()):
+            title = "%s %s" % (title, nxt)
+        return title[:250]
+    return None
+
+
 # The library stores venues lowercase. Upper-casing them blindly yields
 # `NEURIPS`/`ARXIV`, which clashes with how these venues are written
 # everywhere else in a topic folder, so map the ones with a house style.

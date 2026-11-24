@@ -24,15 +24,17 @@ import argparse
 import re
 import sys
 
-from common import (Sidecar, add_topic_arg, load_config, parse_filename,
-                    print_json, scan_pdfs)
+from common import (Sidecar, add_topic_arg, filename_ids,
+                    guess_title_from_text, load_config, looks_like_title,
+                    parse_filename, print_json, scan_pdfs)
 from metadata_overrides import apply_overrides
 from sources import get_source, merge_records
 
 ABSTRACT_RE = re.compile(r"(?im)^[^\S\n]*abstract[^\n]{0,40}$")
 
 
-def extract_local(path, pages: int, max_chars: int) -> tuple[str, str | None]:
+def pdf_text(path, pages: int) -> tuple[str, str | None]:
+    """Raw text of the first `pages` pages, or ("", reason)."""
     try:
         import logging
 
@@ -54,9 +56,44 @@ def extract_local(path, pages: int, max_chars: int) -> tuple[str, str | None]:
         text = "\n".join(chunks).strip()
         if not text:
             return "", "no extractable text (scanned PDF?)"
-        return focus_excerpt(text, max_chars), None
+        return text, None
     except Exception as exc:
         return "", str(exc)
+
+
+def extract_local(path, pages: int, max_chars: int) -> tuple[str, str | None]:
+    text, error = pdf_text(path, pages)
+    if not text:
+        return "", error
+    return focus_excerpt(text, max_chars), None
+
+
+#: page-1 text kept for verifying candidates against the printed title
+HEAD_CHARS = 4000
+
+
+def choose_title_hint(rec: dict | None, hints: dict, ids: dict, path):
+    """(title to search with, where it came from, page-1 text or None).
+
+    A filename is only a usable query when it is a title. Publisher download
+    names (`2026.emnlp-main.589.pdf`, `s41586-025-10072-4.pdf`) are
+    identifiers: matched as titles they fail every time, and the closest title
+    a source offers back is an unrelated paper. For those, the query is a
+    title guessed from the first page, and the page text travels with it so a
+    source can accept a candidate whose real title is printed there.
+    """
+    rec = rec or {}
+    from_override = (rec.get("provenance") or {}).get("title") == "metadata_override"
+    if rec.get("title") and (rec.get("ids") or from_override):
+        return rec["title"], "override" if from_override else "record", None
+    if looks_like_title(hints["title"]) and not ids:
+        return hints["title"], "filename", None
+    text, _error = pdf_text(path, 1)
+    head = text[:HEAD_CHARS] or None
+    guess = guess_title_from_text(text)
+    if guess:
+        return guess, "pdf_text", head
+    return hints["title"], "filename", head
 
 
 def focus_excerpt(text: str, max_chars: int) -> str:
@@ -87,6 +124,8 @@ def cmd_digest(sidecar: Sidecar, chars: int):
         where = ("in-corpus" if ids.get("archer")
                  else "openalex" if ids.get("openalex") else "local-only")
         print("source: %s  %s" % (rec.get("source", "?"), where))
+        if (rec.get("provenance") or {}).get("title") == "pdf_text_guess":
+            print("title: guessed from page 1, unconfirmed by any source")
         if venue_year:
             print("venue/year: %s" % venue_year)
         if rec.get("authors"):
@@ -99,6 +138,15 @@ def cmd_digest(sidecar: Sidecar, chars: int):
         elif rec.get("collect_error"):
             print("\n[no text: %s]" % rec["collect_error"])
         print()
+
+
+UNRESOLVED_WARNING = (
+    "No source identified the papers in `unresolved`. This is not evidence they "
+    "are absent: a near_miss is only the closest title a source returned, and "
+    "below the threshold it is usually an unrelated paper. Check `searched_as` "
+    "against the PDF's first page; if it is not the real title, fix it with "
+    "metadata.py --set and rerun with --retry-unresolved. Before telling the "
+    "user a paper is not in the library, run exact_search on its real title.")
 
 
 def resolve_sources(todo, names, config, cache_dir, threshold):
@@ -129,6 +177,7 @@ def resolve_sources(todo, names, config, cache_dir, threshold):
             answer = answers.get(item["key"]) or {}
             scores.setdefault(item["key"], {})[name] = {
                 "score": answer.get("score"),
+                "match_kind": answer.get("match_kind") if answer.get("matched") else None,
                 "near_miss": answer.get("near_miss"),
                 "error": answer.get("error"),
             }
@@ -167,6 +216,12 @@ def records_from_sidecar(rec: dict) -> list[dict]:
     for field in fields:
         value = rec.get(field)
         if value in (None, "", [], {}):
+            continue
+        # Overrides are re-applied after the merge, and they must sit on top of
+        # what the sources say now, not on a copy of themselves -- otherwise
+        # withdrawing one later would restore the override, not the source.
+        if provenance.get(field) in (
+                "metadata_override", "withdrawn_override", "pdf_text_guess"):
             continue
         owner = provenance.get(field) or primary
         records.setdefault(owner, {
@@ -253,11 +308,19 @@ def main():
                 or (args.retry_unresolved and unresolved)
                 or missing_untried_source):
             hints = parse_filename(paper["key"])
+            file_ids = filename_ids(paper["key"])
+            title, hint_from, head = choose_title_hint(
+                rec, hints, file_ids, sidecar.topic / paper["path"])
             sidecar.upsert(paper["key"], filename_title=hints["title"],
-                           filename_venue=hints["venue"], filename_year=hints["year"])
+                           filename_venue=hints["venue"], filename_year=hints["year"],
+                           title_hint=title, title_hint_from=hint_from)
             todo.append({
                 "key": paper["key"],
-                "title": (rec or {}).get("title") or hints["title"],
+                "title": title,
+                "title_hint_from": hint_from,
+                "head": head,
+                "doi": file_ids.get("doi"),
+                "url": file_ids.get("url"),
                 "year": (rec or {}).get("year") or hints["year"],
                 "venue": (rec or {}).get("venue") or hints["venue"],
             })
@@ -316,9 +379,11 @@ def main():
                 )
                 if primary_score is None and existing.get("ids", {}).get(primary):
                     primary_score = existing.get("match_score")
+                primary_kind = (scores.get(key, {}).get(primary) or {}).get("match_kind")
                 sidecar.upsert(
                     key,
                     source="library" if primary == "archer" else primary,
+                    match_kind=primary_kind or existing.get("match_kind"),
                     resolved_by=resolved_sources,
                     ids=merged["ids"], archer_id=merged["ids"].get("archer"),
                     provenance=merged["provenance"],
@@ -346,10 +411,16 @@ def main():
             sidecar.upsert(
                 key, source="local", ids={}, archer_id=None, resolved_by=[],
                 match_score=best[1].get("score"), near_miss=best[1].get("near_miss"),
+                match_kind=None,
                 tried_sources=sorted(
                     name for name, result in attempts.items()
                     if not result.get("error")),
-                title=hints["title"], venue=hints["venue"], year=hints["year"],
+                # a title guessed from page 1 reads better in the digest than
+                # an identifier, and is labelled as a guess in provenance
+                title=item["title"],
+                provenance=({"title": "pdf_text_guess"}
+                            if item["title_hint_from"] == "pdf_text" else {}),
+                venue=hints["venue"], year=hints["year"],
                 authors=[], abstract=None, excerpt=text or None,
                 collect_error=error or best[1].get("error"))
             if error:
@@ -359,6 +430,21 @@ def main():
     # are deliberately re-applied after every source refresh.
     applied_overrides = apply_overrides(sidecar)
     sidecar.save()
+
+    unresolved = []
+    for item in todo:
+        if sidecar.entries[item["key"]].get("ids"):
+            continue
+        unresolved.append({
+            "key": item["key"],
+            "searched_as": item["title"],
+            "searched_as_from": item["title_hint_from"],
+            "closest_by_source": {
+                name: {"score": result.get("score"),
+                       "near_miss": result.get("near_miss"),
+                       **({"error": result["error"]} if result.get("error") else {})}
+                for name, result in scores.get(item["key"], {}).items()},
+        })
 
     summary = {
         "topic": str(sidecar.topic),
@@ -384,9 +470,11 @@ def main():
         "with_doi": sum(1 for r in sidecar.entries.values()
                         if (r.get("ids") or {}).get("doi") or r.get("doi")),
         "dropped_missing_from_disk": removed,
+        "unresolved": unresolved,
         "source_errors": source_errors,
         "problems": problems,
         "metadata_overrides_applied": applied_overrides,
+        **({"unresolved_warning": UNRESOLVED_WARNING} if unresolved else {}),
         "next": "python collect.py --topic <dir> --digest   # read everything, then design the taxonomy",
     }
     print_json(summary)
